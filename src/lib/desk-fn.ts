@@ -681,3 +681,92 @@ export const runBatchForecast = createServerFn({ method: "POST" })
     }));
     return { results };
   });
+
+export type SettlementHit = {
+  ticker: string;
+  seriesTicker: string;
+  eventTitle: string;
+  target: number;
+  closeTime: string;
+  result: "yes" | "no";
+  last: number;
+};
+
+function parseResult(raw: string | undefined): "yes" | "no" | null {
+  const s = (raw ?? "").toLowerCase();
+  if (s === "yes") return "yes";
+  if (s === "no") return "no";
+  return null;
+}
+
+async function loadSettledFifteen(): Promise<SettlementHit[]> {
+  const series = ["KXBTC15M", "KXETH15M"] as const;
+  const pages = await mapPool([...series], 2, async (s) => {
+    const q = new URLSearchParams({
+      limit: "12",
+      status: "settled",
+      series_ticker: s,
+      with_nested_markets: "true",
+    });
+    const page = await kalshiGet<{ events?: RawEvent[] }>(`/events?${q.toString()}`).catch(
+      () => ({ events: [] as RawEvent[] }),
+    );
+    return page.events ?? [];
+  });
+  const hits: SettlementHit[] = [];
+  for (const e of pages.flat()) {
+    const m = (e.markets ?? [])[0];
+    const result = parseResult(m?.result);
+    if (!m?.ticker || !result) continue;
+    hits.push({
+      ticker: m.ticker,
+      seriesTicker: e.series_ticker || "",
+      eventTitle: e.title || m.title || "",
+      target:
+        typeof m.floor_strike === "number" ? strikeThreshold(m.floor_strike) : 0,
+      closeTime: m.close_time || "",
+      result,
+      last: dollars(m.last_price_dollars),
+    });
+  }
+  hits.sort((a, b) => Date.parse(b.closeTime) - Date.parse(a.closeTime));
+  return hits;
+}
+
+async function lookupResults(tickers: string[]): Promise<SettlementHit[]> {
+  const unique = [...new Set(tickers.map((t) => t.trim()).filter(Boolean))].slice(0, 24);
+  const rows = await mapPool(unique, 2, async (ticker) => {
+    try {
+      const res = await kalshiGet<{ market: RawMarket }>(
+        `/markets/${encodeURIComponent(ticker)}`,
+      );
+      const m = res.market;
+      const result = parseResult(m?.result);
+      if (!m?.ticker || !result) return null;
+      return {
+        ticker: m.ticker,
+        seriesTicker: "",
+        eventTitle: m.title || "",
+        target:
+          typeof m.floor_strike === "number" ? strikeThreshold(m.floor_strike) : 0,
+        closeTime: m.close_time || "",
+        result,
+        last: dollars(m.last_price_dollars),
+      } satisfies SettlementHit;
+    } catch {
+      return null;
+    }
+  });
+  return rows.filter((r): r is SettlementHit => r != null);
+}
+
+export const getSettlements = createServerFn({ method: "POST" })
+  .validator((input: { tickers?: string[] }) => input)
+  .handler(async ({ data }): Promise<{ history: SettlementHit[]; extra: SettlementHit[] }> => {
+    const history = await loadSettledFifteen().catch(() => [] as SettlementHit[]);
+    const known = new Set(history.map((h) => h.ticker));
+    const need = (data.tickers ?? []).filter((t) => t && !known.has(t));
+    const extra = need.length ? await lookupResults(need).catch(() => [] as SettlementHit[]) : [];
+    return { history, extra };
+  });
+

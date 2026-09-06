@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as BlotterRouteImport } from './routes/blotter'
+import { Route as CalibrationRouteImport } from './routes/calibration'
 import { Route as MarketTickerRouteImport } from './routes/market.$ticker'
 
 const IndexRoute = IndexRouteImport.update({
@@ -23,6 +24,11 @@ const BlotterRoute = BlotterRouteImport.update({
   path: '/blotter',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CalibrationRoute = CalibrationRouteImport.update({
+  id: '/calibration',
+  path: '/calibration',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const MarketTickerRoute = MarketTickerRouteImport.update({
   id: '/market/$ticker',
   path: '/market/$ticker',
@@ -32,30 +38,34 @@ const MarketTickerRoute = MarketTickerRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/blotter': typeof BlotterRoute
+  '/calibration': typeof CalibrationRoute
   '/market/$ticker': typeof MarketTickerRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/blotter': typeof BlotterRoute
+  '/calibration': typeof CalibrationRoute
   '/market/$ticker': typeof MarketTickerRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/blotter': typeof BlotterRoute
+  '/calibration': typeof CalibrationRoute
   '/market/$ticker': typeof MarketTickerRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/blotter' | '/market/$ticker'
+  fullPaths: '/' | '/blotter' | '/calibration' | '/market/$ticker'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/blotter' | '/market/$ticker'
-  id: '__root__' | '/' | '/blotter' | '/market/$ticker'
+  to: '/' | '/blotter' | '/calibration' | '/market/$ticker'
+  id: '__root__' | '/' | '/blotter' | '/calibration' | '/market/$ticker'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BlotterRoute: typeof BlotterRoute
+  CalibrationRoute: typeof CalibrationRoute
   MarketTickerRoute: typeof MarketTickerRoute
 }
 
@@ -75,6 +85,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BlotterRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/calibration': {
+      id: '/calibration'
+      path: '/calibration'
+      fullPath: '/calibration'
+      preLoaderRoute: typeof CalibrationRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/market/$ticker': {
       id: '/market/$ticker'
       path: '/market/$ticker'
@@ -88,6 +105,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BlotterRoute: BlotterRoute,
+  CalibrationRoute: CalibrationRoute,
   MarketTickerRoute: MarketTickerRoute,
 }
 export const routeTree = rootRouteImport

@@ -60,6 +60,7 @@ type BlotterState = Persisted & {
   closeLot: (id: string, reason: CloseReason, exitPrice: number) => void;
   voidLot: (id: string) => void;
   applyMarks: (quotes: TickerMark[]) => void;
+  settleLots: (rows: { ticker: string; result: "yes" | "no" }[]) => void;
   reset: () => void;
 };
 
@@ -292,6 +293,33 @@ export const useBlotter = create<BlotterState>((set, get) => ({
       }
       if (!changed && s.hydrated) return s;
       const next = { lots: base.lots, marks };
+      write(next);
+      return { ...next, hydrated: true };
+    });
+  },
+  settleLots: (rows) => {
+    if (rows.length === 0) return;
+    const byTicker = new Map(rows.map((r) => [r.ticker, r.result]));
+    set((s) => {
+      const base = s.hydrated ? s : read();
+      let changed = false;
+      const lots = base.lots.map((lot) => {
+        if (lot.status !== "open") return lot;
+        const result = byTicker.get(lot.ticker);
+        if (!result) return lot;
+        const y = result === "yes" ? 1 : 0;
+        const exitPrice = lot.side === "yes" ? y : 1 - y;
+        changed = true;
+        return {
+          ...lot,
+          status: "closed" as const,
+          closedAt: new Date().toISOString(),
+          exitPrice,
+          closeReason: (result === "yes" ? "settle-yes" : "settle-no") as CloseReason,
+        };
+      });
+      if (!changed && s.hydrated) return s;
+      const next = { lots, marks: base.marks };
       write(next);
       return { ...next, hydrated: true };
     });

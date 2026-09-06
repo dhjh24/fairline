@@ -8,9 +8,11 @@ import { StatStrip } from "@/components/stat-strip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { isBitcoinSeries, isEthereumSeries, isHourlyCrypto } from "@/lib/crypto";
+import { isBitcoinSeries, isEthereumSeries, isFifteenCrypto, isHourlyCrypto } from "@/lib/crypto";
 import { useBlotter } from "@/lib/blotter";
-import type { DeskMarket, DeskResponse } from "@/lib/types";
+import { useCalibration, type QuoteSnap } from "@/lib/calibration";
+import { useForecasts } from "@/lib/forecasts";
+import type { CryptoFifteen, DeskMarket, DeskResponse } from "@/lib/types";
 import { useWatchlist } from "@/lib/watchlist";
 import { cn } from "@/lib/utils";
 
@@ -50,11 +52,44 @@ export function DeskView({
   const [q, setQ] = useState("");
   const watch = useWatchlist((s) => s.tickers);
   const applyMarks = useBlotter((s) => s.applyMarks);
+  const lots = useBlotter((s) => s.lots);
+  const capture = useCalibration((s) => s.capture);
+  const grokByTicker = useForecasts((s) => s.byTicker);
 
   useEffect(() => {
     if (!data) return;
     applyMarks(data.markets.map((m) => ({ ticker: m.ticker, mid: m.mid, fair: m.fair })));
   }, [data, applyMarks]);
+
+  useEffect(() => {
+    if (!data) return;
+    const want = new Set<string>([
+      ...watch,
+      ...lots.filter((l) => l.status === "open").map((l) => l.ticker),
+      ...(data.btc?.rungs.map((r) => r.ticker) ?? []),
+      ...(data.eth?.rungs.map((r) => r.ticker) ?? []),
+    ]);
+    const rows: QuoteSnap[] = [];
+    const seen = new Set<string>();
+    const push = (row: QuoteSnap) => {
+      if (seen.has(row.ticker)) return;
+      seen.add(row.ticker);
+      rows.push(row);
+    };
+    if (data.btc15) push(snapFifteen(data.btc15, grokByTicker[data.btc15.ticker]?.probability));
+    if (data.eth15) push(snapFifteen(data.eth15, grokByTicker[data.eth15.ticker]?.probability));
+    for (const m of data.markets) {
+      if (
+        m.signal === "hold" &&
+        !want.has(m.ticker) &&
+        !isFifteenCrypto(m.seriesTicker)
+      ) {
+        continue;
+      }
+      push(snapMarket(m, grokByTicker[m.ticker]?.probability));
+    }
+    capture(rows);
+  }, [data, watch, lots, capture, grokByTicker]);
 
   const markets = useMemo(() => {
     if (!data) return [];
@@ -195,6 +230,46 @@ export function DeskView({
       ) : null}
     </div>
   );
+}
+
+function snapMarket(m: DeskMarket, grok?: number): QuoteSnap {
+  return {
+    ticker: m.ticker,
+    eventTicker: m.eventTicker,
+    seriesTicker: m.seriesTicker,
+    title: m.yesSubTitle || m.title,
+    eventTitle: m.eventTitle,
+    category: m.category,
+    closeTime: m.closeTime,
+    target: m.strike,
+    mid: m.mid,
+    fair: m.fair,
+    bid: m.bid,
+    ask: m.ask,
+    signal: m.signal,
+    grok,
+    snappedAt: new Date().toISOString(),
+  };
+}
+
+function snapFifteen(p: CryptoFifteen, grok?: number): QuoteSnap {
+  return {
+    ticker: p.ticker,
+    eventTicker: p.ticker,
+    seriesTicker: p.asset === "eth" ? "KXETH15M" : "KXBTC15M",
+    title: p.title,
+    eventTitle: p.eventTitle,
+    category: "Crypto",
+    closeTime: p.closeTime,
+    target: p.target,
+    mid: p.mid,
+    fair: p.fair,
+    bid: p.bid,
+    ask: p.ask,
+    signal: p.signal,
+    grok,
+    snappedAt: new Date().toISOString(),
+  };
 }
 
 function Chip({
