@@ -1,11 +1,13 @@
 import { createServerFn } from "@tanstack/react-start";
 import {
-  BTC_SERIES,
-  btcThreshold,
-  impliedBtc,
+  CRYPTO_SERIES,
+  impliedSpot,
   isBitcoinSeries,
+  isEthereumSeries,
+  isHourlyCrypto,
   pickAtmWindow,
-} from "@/lib/btc";
+  strikeThreshold,
+} from "@/lib/crypto";
 import { KALSHI_API, dollars, type RawEvent, type RawMarket } from "@/lib/kalshi";
 import {
   BATCH_SIZE,
@@ -16,9 +18,9 @@ import {
 } from "@/lib/llm";
 import { parseBook, priceMarket, type ModelInput } from "@/lib/model";
 import type {
-  BtcTape,
   Candle,
   CategoryCount,
+  CryptoTape,
   DeskMarket,
   DeskResponse,
   GrokForecast,
@@ -94,7 +96,7 @@ function toInput(
     volume: dollars(m.volume_fp),
     volume24h: dollars(m.volume_24h_fp),
     openInterest: dollars(m.open_interest_fp),
-    strike: typeof m.floor_strike === "number" ? btcThreshold(m.floor_strike) : undefined,
+    strike: typeof m.floor_strike === "number" ? strikeThreshold(m.floor_strike) : undefined,
   };
 }
 
@@ -129,8 +131,8 @@ async function loadSeriesEvents(series: string): Promise<RawEvent[]> {
   return page.events ?? [];
 }
 
-async function loadBtcEvents(): Promise<RawEvent[]> {
-  const pages = await mapPool([...BTC_SERIES], 2, (series) =>
+async function loadCryptoEvents(): Promise<RawEvent[]> {
+  const pages = await mapPool([...CRYPTO_SERIES], 2, (series) =>
     loadSeriesEvents(series).catch(() => [] as RawEvent[]),
   );
   const map = new Map<string, RawEvent>();
@@ -150,9 +152,15 @@ function mergeEvents(base: RawEvent[], extra: RawEvent[]): RawEvent[] {
   return [...map.values()];
 }
 
-function buildBtcTape(markets: DeskMarket[]): BtcTape | null {
+function buildCryptoTape(
+  markets: DeskMarket[],
+  directionalSeries: string,
+  asset: CryptoTape["asset"],
+  name: string,
+): CryptoTape | null {
+  const want = directionalSeries.toUpperCase();
   const directional = markets.filter(
-    (m) => m.seriesTicker.toUpperCase() === "KXBTCD" && (m.strike ?? 0) > 0,
+    (m) => m.seriesTicker.toUpperCase() === want && (m.strike ?? 0) > 0,
   );
   if (directional.length < 4) return null;
   const byEvent = new Map<string, DeskMarket[]>();
@@ -190,10 +198,12 @@ function buildBtcTape(markets: DeskMarket[]): BtcTape | null {
       })),
     7,
   );
-  const implied = impliedBtc(rungs);
+  const implied = impliedSpot(rungs);
   if (!implied || rungs.length < 3) return null;
   const head = best[0]!;
   return {
+    asset,
+    name,
     implied,
     closeTime: head.closeTime,
     eventTicker: head.eventTicker,
@@ -201,6 +211,39 @@ function buildBtcTape(markets: DeskMarket[]): BtcTape | null {
     seriesTicker: head.seriesTicker,
     rungs,
   };
+}
+
+function keepCrypto(
+  all: DeskMarket[],
+  tape: CryptoTape | null,
+  cap: number,
+): DeskMarket[] {
+  const keep: DeskMarket[] = [];
+  const seen = new Set<string>();
+  if (tape) {
+    for (const rung of tape.rungs) {
+      const row = all.find((m) => m.ticker === rung.ticker);
+      if (row && !seen.has(row.ticker)) {
+        keep.push(row);
+        seen.add(row.ticker);
+      }
+    }
+  }
+  const more = all
+    .filter((m) => {
+      if (seen.has(m.ticker)) return false;
+      if (isHourlyCrypto(m.seriesTicker)) {
+        return m.mid >= 0.08 && m.mid <= 0.92 && m.volume24h >= 80;
+      }
+      return true;
+    })
+    .sort((a, b) => b.score - a.score || b.volume24h - a.volume24h);
+  for (const m of more) {
+    keep.push(m);
+    seen.add(m.ticker);
+    if (keep.length >= cap) break;
+  }
+  return keep;
 }
 
 function buildDesk(events: RawEvent[]): DeskResponse {
@@ -247,44 +290,24 @@ function buildDesk(events: RawEvent[]): DeskResponse {
   priced.sort((a, b) => b.volume24h - a.volume24h);
 
   const btcAll = priced.filter((m) => isBitcoinSeries(m.seriesTicker));
-  const rest = priced.filter((m) => !isBitcoinSeries(m.seriesTicker));
-  const btcTape = buildBtcTape(btcAll);
+  const ethAll = priced.filter((m) => isEthereumSeries(m.seriesTicker));
+  const rest = priced.filter(
+    (m) => !isBitcoinSeries(m.seriesTicker) && !isEthereumSeries(m.seriesTicker),
+  );
+  const btcTape = buildCryptoTape(btcAll, "KXBTCD", "btc", "Bitcoin");
+  const ethTape = buildCryptoTape(ethAll, "KXETHD", "eth", "Ethereum");
 
+  const CRYPTO_SLOTS = 56;
   const byVol = rest.slice(0, 200);
   const seen = new Set(byVol.map((m) => m.ticker));
   const extra = rest
     .filter((m) => !seen.has(m.ticker) && m.signal !== "hold" && m.volume24h >= 40)
     .sort((a, b) => b.score - a.score)
     .slice(0, 40);
-  const restMarkets = [...byVol, ...extra];
-
-  const btcKeep: DeskMarket[] = [];
-  const btcSeen = new Set<string>();
-  if (btcTape) {
-    for (const rung of btcTape.rungs) {
-      const row = btcAll.find((m) => m.ticker === rung.ticker);
-      if (row && !btcSeen.has(row.ticker)) {
-        btcKeep.push(row);
-        btcSeen.add(row.ticker);
-      }
-    }
-  }
-  const moreBtc = btcAll
-    .filter((m) => {
-      if (btcSeen.has(m.ticker)) return false;
-      const hourly =
-        m.seriesTicker.toUpperCase() === "KXBTCD" || m.seriesTicker.toUpperCase() === "KXBTC";
-      if (hourly) return m.mid >= 0.08 && m.mid <= 0.92 && m.volume24h >= 80;
-      return true;
-    })
-    .sort((a, b) => b.score - a.score || b.volume24h - a.volume24h);
-  for (const m of moreBtc) {
-    btcKeep.push(m);
-    btcSeen.add(m.ticker);
-    if (btcKeep.length >= 28) break;
-  }
-
-  const markets = [...restMarkets, ...btcKeep].slice(0, DESK_SIZE);
+  const restMarkets = [...byVol, ...extra].slice(0, DESK_SIZE - CRYPTO_SLOTS);
+  const btcKeep = keepCrypto(btcAll, btcTape, 28);
+  const ethKeep = keepCrypto(ethAll, ethTape, 28);
+  const markets = [...restMarkets, ...btcKeep, ...ethKeep].slice(0, DESK_SIZE);
 
   const catMap = new Map<string, number>();
   for (const m of markets) {
@@ -312,6 +335,7 @@ function buildDesk(events: RawEvent[]): DeskResponse {
       volume24h: markets.reduce((s, m) => s + m.volume24h, 0),
     },
     btc: btcTape,
+    eth: ethTape,
   };
 }
 
@@ -321,8 +345,8 @@ export const getDesk = createServerFn({ method: "GET" }).handler(async () => {
   }
   try {
     const general = await loadEvents();
-    const btc = await loadBtcEvents().catch(() => [] as RawEvent[]);
-    const data = buildDesk(mergeEvents(general, btc));
+    const crypto = await loadCryptoEvents().catch(() => [] as RawEvent[]);
+    const data = buildDesk(mergeEvents(general, crypto));
     deskCache = { at: Date.now(), data };
     return data;
   } catch (err) {

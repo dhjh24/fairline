@@ -9,17 +9,31 @@ export const BTC_SERIES = [
   "KXBTC2026200",
 ] as const;
 
+export const ETH_SERIES = ["KXETHD", "KXETHMAXY", "KXETHMINY"] as const;
+
+export const CRYPTO_SERIES = [...BTC_SERIES, ...ETH_SERIES];
+
 export function isBitcoinSeries(series: string): boolean {
   const s = series.toUpperCase();
   return /^(KX)?BTC(\d|[A-Z]|$)/.test(s);
 }
 
-export function btcThreshold(floorStrike: number): number {
+export function isEthereumSeries(series: string): boolean {
+  const s = series.toUpperCase();
+  return /^(KX)?ETH(\d|[A-Z]|$)/.test(s);
+}
+
+export function isHourlyCrypto(series: string): boolean {
+  const s = series.toUpperCase();
+  return s === "KXBTCD" || s === "KXBTC" || s === "KXETHD" || s === "KXETH";
+}
+
+export function strikeThreshold(floorStrike: number): number {
   if (!Number.isFinite(floorStrike) || floorStrike <= 0) return 0;
   return Math.round(floorStrike + 0.01);
 }
 
-export function impliedBtc(
+export function impliedSpot(
   rungs: { strike: number; mid: number }[],
 ): number | null {
   const rows = rungs

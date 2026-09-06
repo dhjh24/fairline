@@ -1,24 +1,25 @@
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { BtcTapeCard } from "@/components/btc-tape";
+import { CryptoTapeCard } from "@/components/crypto-tape";
 import { DeskList } from "@/components/desk-list";
 import { ForecastBar } from "@/components/forecast-bar";
 import { StatStrip } from "@/components/stat-strip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { isBitcoinSeries } from "@/lib/btc";
+import { isBitcoinSeries, isEthereumSeries, isHourlyCrypto } from "@/lib/crypto";
 import { useBlotter } from "@/lib/blotter";
 import type { DeskMarket, DeskResponse } from "@/lib/types";
 import { useWatchlist } from "@/lib/watchlist";
 import { cn } from "@/lib/utils";
 
-type View = "opportunities" | "all" | "watch" | "btc";
+type View = "opportunities" | "all" | "watch" | "btc" | "eth";
 type SortKey = "score" | "edge" | "volume" | "close" | "confidence";
 
 const VIEWS: { id: View; label: string }[] = [
   { id: "opportunities", label: "Opportunities" },
   { id: "btc", label: "Bitcoin" },
+  { id: "eth", label: "Ethereum" },
   { id: "all", label: "All books" },
   { id: "watch", label: "Watchlist" },
 ];
@@ -59,16 +60,15 @@ export function DeskView({
     let rows: DeskMarket[] = data.markets;
     if (view === "opportunities") {
       rows = rows.filter((m) => m.signal !== "hold");
-      const rung = new Set(data.btc?.rungs.map((r) => r.ticker) ?? []);
-      rows = rows.filter((m) => {
-        const hourly =
-          m.seriesTicker.toUpperCase() === "KXBTCD" ||
-          m.seriesTicker.toUpperCase() === "KXBTC";
-        return !hourly || rung.has(m.ticker);
-      });
+      const rungs = new Set([
+        ...(data.btc?.rungs.map((r) => r.ticker) ?? []),
+        ...(data.eth?.rungs.map((r) => r.ticker) ?? []),
+      ]);
+      rows = rows.filter((m) => !isHourlyCrypto(m.seriesTicker) || rungs.has(m.ticker));
     }
     if (view === "watch") rows = rows.filter((m) => watch.includes(m.ticker));
     if (view === "btc") rows = rows.filter((m) => isBitcoinSeries(m.seriesTicker));
+    if (view === "eth") rows = rows.filter((m) => isEthereumSeries(m.seriesTicker));
     if (cat !== "All") rows = rows.filter((m) => m.category === cat);
     const query = q.trim().toLowerCase();
     if (query) {
@@ -115,7 +115,12 @@ export function DeskView({
       {data ? (
         <>
           <StatStrip stats={data.stats} asOf={data.asOf} />
-          {data.btc ? <BtcTapeCard tape={data.btc} /> : null}
+          {data.btc || data.eth ? (
+            <div className={cn("grid gap-4", data.btc && data.eth ? "lg:grid-cols-2" : "")}>
+              {data.btc ? <CryptoTapeCard tape={data.btc} /> : null}
+              {data.eth ? <CryptoTapeCard tape={data.eth} /> : null}
+            </div>
+          ) : null}
 
           <div className="flex flex-col gap-3">
             <div className="flex flex-wrap gap-2">

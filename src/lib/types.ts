@@ -64,10 +64,11 @@ export type DeskResponse = {
   markets: DeskMarket[];
   categories: CategoryCount[];
   stats: DeskStats;
-  btc?: BtcTape | null;
+  btc?: CryptoTape | null;
+  eth?: CryptoTape | null;
 };
 
-export type BtcRung = {
+export type CryptoRung = {
   ticker: string;
   strike: number;
   label: string;
@@ -78,14 +79,20 @@ export type BtcRung = {
   volume24h: number;
 };
 
-export type BtcTape = {
+export type CryptoTape = {
+  asset: "btc" | "eth";
+  name: string;
   implied: number;
   closeTime: string;
   eventTicker: string;
   eventTitle: string;
   seriesTicker: string;
-  rungs: BtcRung[];
+  rungs: CryptoRung[];
 };
+
+/** @deprecated use CryptoTape */
+export type BtcRung = CryptoRung;
+export type BtcTape = CryptoTape;
 
 export type Candle = {
   t: number;

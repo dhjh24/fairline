@@ -118,9 +118,9 @@ export function AppShell({
                       order-book imbalance, scaled by liquidity.
                     </li>
                     <li>
-                      <span className="text-fg">Bitcoin tape.</span> Hourly above/below
-                      contracts are pulled in separately. Implied BTC is the strike where
-                      the live ladder crosses 50¢.
+                      <span className="text-fg">Crypto tape.</span> Hourly Bitcoin and
+                      Ethereum above/below contracts are pulled in separately. Implied
+                      spot is the strike where the live ladder crosses 50¢.
                     </li>
                   </ol>
                   <p>
