@@ -66,6 +66,8 @@ export type DeskResponse = {
   stats: DeskStats;
   btc?: CryptoTape | null;
   eth?: CryptoTape | null;
+  btc15?: CryptoFifteen | null;
+  eth15?: CryptoFifteen | null;
 };
 
 export type CryptoRung = {
@@ -88,6 +90,23 @@ export type CryptoTape = {
   eventTitle: string;
   seriesTicker: string;
   rungs: CryptoRung[];
+};
+
+export type CryptoFifteen = {
+  asset: "btc" | "eth";
+  name: string;
+  ticker: string;
+  target: number;
+  mid: number;
+  fair: number;
+  bid: number;
+  ask: number;
+  signal: Signal;
+  edge: number;
+  volume24h: number;
+  closeTime: string;
+  title: string;
+  eventTitle: string;
 };
 
 /** @deprecated use CryptoTape */

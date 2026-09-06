@@ -1,4 +1,5 @@
 export const BTC_SERIES = [
+  "KXBTC15M",
   "KXBTCD",
   "KXBTCMAXY",
   "KXBTCMINY",
@@ -9,9 +10,10 @@ export const BTC_SERIES = [
   "KXBTC2026200",
 ] as const;
 
-export const ETH_SERIES = ["KXETHD", "KXETHMAXY", "KXETHMINY"] as const;
+export const ETH_SERIES = ["KXETH15M", "KXETHD", "KXETHMAXY", "KXETHMINY"] as const;
 
 export const CRYPTO_SERIES = [...BTC_SERIES, ...ETH_SERIES];
+export const CRYPTO_FIRST = ["KXBTC15M", "KXETH15M"] as const;
 
 export function isBitcoinSeries(series: string): boolean {
   const s = series.toUpperCase();
@@ -28,9 +30,16 @@ export function isHourlyCrypto(series: string): boolean {
   return s === "KXBTCD" || s === "KXBTC" || s === "KXETHD" || s === "KXETH";
 }
 
+export function isFifteenCrypto(series: string): boolean {
+  const s = series.toUpperCase();
+  return s === "KXBTC15M" || s === "KXETH15M";
+}
+
 export function strikeThreshold(floorStrike: number): number {
   if (!Number.isFinite(floorStrike) || floorStrike <= 0) return 0;
-  return Math.round(floorStrike + 0.01);
+  const bumped = floorStrike + 0.01;
+  if (Math.abs(bumped - Math.round(bumped)) < 0.001) return Math.round(bumped);
+  return floorStrike;
 }
 
 export function impliedSpot(

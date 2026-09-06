@@ -120,7 +120,8 @@ export function AppShell({
                     <li>
                       <span className="text-fg">Crypto tape.</span> Hourly Bitcoin and
                       Ethereum above/below contracts are pulled in separately. Implied
-                      spot is the strike where the live ladder crosses 50¢.
+                      spot is the strike where the live ladder crosses 50¢. The 15-minute
+                      book is a single up/down versus the last CF print.
                     </li>
                   </ol>
                   <p>

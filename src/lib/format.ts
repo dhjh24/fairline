@@ -75,3 +75,25 @@ export function usdPrice(n: number): string {
     maximumFractionDigits: n >= 100 ? 0 : 2,
   }).format(n);
 }
+
+export function usdTarget(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n);
+}
+
+export function clockRemain(iso: string, now = Date.now()): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "—";
+  const ms = t - now;
+  if (ms <= 0) return "settling";
+  const total = Math.floor(ms / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  if (m >= 60) return `${Math.floor(m / 60)}h ${m % 60}m`;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}

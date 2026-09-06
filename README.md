@@ -4,7 +4,7 @@ Independent fair-value desk for live [Kalshi](https://kalshi.com) event contract
 
 Fairline does **not** copy the last trade. It estimates a fair YES probability from the live book, then ranks contracts where that number disagrees with the market by enough to clear the spread.
 
-Bitcoin and Ethereum are first-class boards: hourly above/below contracts are fetched on their own (they never appear in Kalshi’s first event pages). Implied spot is the strike where that ladder crosses 50¢.
+Bitcoin and Ethereum are first-class boards: hourly above/below contracts are fetched on their own (they never appear in Kalshi’s first event pages). Implied spot is the strike where that ladder crosses 50¢. The 15-minute book is up/down versus the last CF print.
 
 ## Model
 

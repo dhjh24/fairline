@@ -1,9 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import {
+  CRYPTO_FIRST,
   CRYPTO_SERIES,
   impliedSpot,
   isBitcoinSeries,
   isEthereumSeries,
+  isFifteenCrypto,
   isHourlyCrypto,
   pickAtmWindow,
   strikeThreshold,
@@ -20,6 +22,7 @@ import { parseBook, priceMarket, type ModelInput } from "@/lib/model";
 import type {
   Candle,
   CategoryCount,
+  CryptoFifteen,
   CryptoTape,
   DeskMarket,
   DeskResponse,
@@ -132,11 +135,17 @@ async function loadSeriesEvents(series: string): Promise<RawEvent[]> {
 }
 
 async function loadCryptoEvents(): Promise<RawEvent[]> {
-  const pages = await mapPool([...CRYPTO_SERIES], 2, (series) =>
+  const rest = CRYPTO_SERIES.filter(
+    (series) => !CRYPTO_FIRST.includes(series as (typeof CRYPTO_FIRST)[number]),
+  );
+  const first = await mapPool([...CRYPTO_FIRST], 2, (series) =>
+    loadSeriesEvents(series).catch(() => [] as RawEvent[]),
+  );
+  const later = await mapPool(rest, 2, (series) =>
     loadSeriesEvents(series).catch(() => [] as RawEvent[]),
   );
   const map = new Map<string, RawEvent>();
-  for (const e of pages.flat()) {
+  for (const e of [...first.flat(), ...later.flat()]) {
     const t = e.event_ticker;
     if (t) map.set(t, e);
   }
@@ -220,13 +229,17 @@ function keepCrypto(
 ): DeskMarket[] {
   const keep: DeskMarket[] = [];
   const seen = new Set<string>();
+  const push = (row: DeskMarket | undefined) => {
+    if (!row || seen.has(row.ticker)) return;
+    keep.push(row);
+    seen.add(row.ticker);
+  };
+  for (const m of all) {
+    if (isFifteenCrypto(m.seriesTicker)) push(m);
+  }
   if (tape) {
     for (const rung of tape.rungs) {
-      const row = all.find((m) => m.ticker === rung.ticker);
-      if (row && !seen.has(row.ticker)) {
-        keep.push(row);
-        seen.add(row.ticker);
-      }
+      push(all.find((m) => m.ticker === rung.ticker));
     }
   }
   const more = all
@@ -239,11 +252,46 @@ function keepCrypto(
     })
     .sort((a, b) => b.score - a.score || b.volume24h - a.volume24h);
   for (const m of more) {
-    keep.push(m);
-    seen.add(m.ticker);
+    push(m);
     if (keep.length >= cap) break;
   }
   return keep;
+}
+
+function buildFifteen(
+  markets: DeskMarket[],
+  series: string,
+  asset: CryptoFifteen["asset"],
+  name: string,
+): CryptoFifteen | null {
+  const want = series.toUpperCase();
+  const rows = markets.filter((m) => m.seriesTicker.toUpperCase() === want);
+  if (rows.length === 0) return null;
+  const now = Date.now();
+  const live = rows
+    .filter((m) => {
+      const t = Date.parse(m.closeTime);
+      return Number.isFinite(t) && t >= now - 30_000;
+    })
+    .sort((a, b) => Date.parse(a.closeTime) - Date.parse(b.closeTime));
+  const m = live[0] ?? rows.sort((a, b) => b.volume24h - a.volume24h)[0];
+  if (!m) return null;
+  return {
+    asset,
+    name,
+    ticker: m.ticker,
+    target: m.strike ?? 0,
+    mid: m.mid,
+    fair: m.fair,
+    bid: m.bid,
+    ask: m.ask,
+    signal: m.signal,
+    edge: m.edge,
+    volume24h: m.volume24h,
+    closeTime: m.closeTime,
+    title: m.yesSubTitle || m.title,
+    eventTitle: m.eventTitle,
+  };
 }
 
 function buildDesk(events: RawEvent[]): DeskResponse {
@@ -296,6 +344,8 @@ function buildDesk(events: RawEvent[]): DeskResponse {
   );
   const btcTape = buildCryptoTape(btcAll, "KXBTCD", "btc", "Bitcoin");
   const ethTape = buildCryptoTape(ethAll, "KXETHD", "eth", "Ethereum");
+  const btc15 = buildFifteen(btcAll, "KXBTC15M", "btc", "Bitcoin 15m");
+  const eth15 = buildFifteen(ethAll, "KXETH15M", "eth", "Ethereum 15m");
 
   const CRYPTO_SLOTS = 56;
   const byVol = rest.slice(0, 200);
@@ -336,6 +386,8 @@ function buildDesk(events: RawEvent[]): DeskResponse {
     },
     btc: btcTape,
     eth: ethTape,
+    btc15,
+    eth15,
   };
 }
 

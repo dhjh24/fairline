@@ -1,5 +1,6 @@
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Crypto15Card } from "@/components/crypto-15";
 import { CryptoTapeCard } from "@/components/crypto-tape";
 import { DeskList } from "@/components/desk-list";
 import { ForecastBar } from "@/components/forecast-bar";
@@ -119,6 +120,12 @@ export function DeskView({
             <div className={cn("grid gap-4", data.btc && data.eth ? "lg:grid-cols-2" : "")}>
               {data.btc ? <CryptoTapeCard tape={data.btc} /> : null}
               {data.eth ? <CryptoTapeCard tape={data.eth} /> : null}
+            </div>
+          ) : null}
+          {data.btc15 || data.eth15 ? (
+            <div className={cn("grid gap-4", data.btc15 && data.eth15 ? "lg:grid-cols-2" : "")}>
+              {data.btc15 ? <Crypto15Card print={data.btc15} /> : null}
+              {data.eth15 ? <Crypto15Card print={data.eth15} /> : null}
             </div>
           ) : null}
 
