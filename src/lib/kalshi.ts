@@ -55,6 +55,8 @@ export type RawMarket = {
   rules_secondary?: string;
   mve_collection_ticker?: string;
   status?: string;
+  floor_strike?: number;
+  strike_type?: string;
 };
 
 export type RawEvent = {

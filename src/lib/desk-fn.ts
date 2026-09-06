@@ -1,4 +1,11 @@
 import { createServerFn } from "@tanstack/react-start";
+import {
+  BTC_SERIES,
+  btcThreshold,
+  impliedBtc,
+  isBitcoinSeries,
+  pickAtmWindow,
+} from "@/lib/btc";
 import { KALSHI_API, dollars, type RawEvent, type RawMarket } from "@/lib/kalshi";
 import {
   BATCH_SIZE,
@@ -9,6 +16,7 @@ import {
 } from "@/lib/llm";
 import { parseBook, priceMarket, type ModelInput } from "@/lib/model";
 import type {
+  BtcTape,
   Candle,
   CategoryCount,
   DeskMarket,
@@ -33,6 +41,14 @@ async function kalshiGet<T>(path: string, timeoutMs = 12_000): Promise<T> {
       signal: ctrl.signal,
       headers: { Accept: "application/json" },
     });
+    if (res.status === 429) {
+      await new Promise((r) => setTimeout(r, 800));
+      const retry = await fetch(`${KALSHI_API}${path}`, {
+        headers: { Accept: "application/json" },
+      });
+      if (!retry.ok) throw new Error(`Kalshi ${retry.status} on ${path.split("?")[0]}`);
+      return (await retry.json()) as T;
+    }
     if (!res.ok) {
       throw new Error(`Kalshi ${res.status} on ${path.split("?")[0]}`);
     }
@@ -78,6 +94,7 @@ function toInput(
     volume: dollars(m.volume_fp),
     volume24h: dollars(m.volume_24h_fp),
     openInterest: dollars(m.open_interest_fp),
+    strike: typeof m.floor_strike === "number" ? btcThreshold(m.floor_strike) : undefined,
   };
 }
 
@@ -99,6 +116,91 @@ async function loadEvents(): Promise<RawEvent[]> {
     if (!cursor) break;
   }
   return events;
+}
+
+async function loadSeriesEvents(series: string): Promise<RawEvent[]> {
+  const q = new URLSearchParams({
+    limit: "8",
+    status: "open",
+    series_ticker: series,
+    with_nested_markets: "true",
+  });
+  const page = await kalshiGet<{ events?: RawEvent[] }>(`/events?${q.toString()}`);
+  return page.events ?? [];
+}
+
+async function loadBtcEvents(): Promise<RawEvent[]> {
+  const pages = await mapPool([...BTC_SERIES], 2, (series) =>
+    loadSeriesEvents(series).catch(() => [] as RawEvent[]),
+  );
+  const map = new Map<string, RawEvent>();
+  for (const e of pages.flat()) {
+    const t = e.event_ticker;
+    if (t) map.set(t, e);
+  }
+  return [...map.values()];
+}
+
+function mergeEvents(base: RawEvent[], extra: RawEvent[]): RawEvent[] {
+  const map = new Map<string, RawEvent>();
+  for (const e of [...base, ...extra]) {
+    const t = e.event_ticker;
+    if (t) map.set(t, e);
+  }
+  return [...map.values()];
+}
+
+function buildBtcTape(markets: DeskMarket[]): BtcTape | null {
+  const directional = markets.filter(
+    (m) => m.seriesTicker.toUpperCase() === "KXBTCD" && (m.strike ?? 0) > 0,
+  );
+  if (directional.length < 4) return null;
+  const byEvent = new Map<string, DeskMarket[]>();
+  for (const m of directional) {
+    const list = byEvent.get(m.eventTicker) ?? [];
+    list.push(m);
+    byEvent.set(m.eventTicker, list);
+  }
+  let best: DeskMarket[] = [];
+  let bestClose = Infinity;
+  const now = Date.now();
+  for (const list of byEvent.values()) {
+    const close = Date.parse(list[0]?.closeTime ?? "");
+    if (Number.isFinite(close) && close >= now && close < bestClose) {
+      bestClose = close;
+      best = list;
+    }
+  }
+  if (best.length < 4) {
+    best = [...byEvent.values()].sort((a, b) => b.length - a.length)[0] ?? [];
+  }
+  if (best.length < 4) return null;
+  const rungs = pickAtmWindow(
+    best
+      .filter((m) => (m.strike ?? 0) > 0)
+      .map((m) => ({
+        ticker: m.ticker,
+        strike: m.strike!,
+        label: m.yesSubTitle || m.title,
+        mid: m.mid,
+        fair: m.fair,
+        signal: m.signal,
+        edge: m.edge,
+        volume24h: m.volume24h,
+      })),
+    7,
+  );
+  const implied = impliedBtc(rungs);
+  if (!implied || rungs.length < 3) return null;
+  const head = best[0]!;
+  return {
+    implied,
+    closeTime: head.closeTime,
+    eventTicker: head.eventTicker,
+    eventTitle: head.eventTitle,
+    seriesTicker: head.seriesTicker,
+    rungs,
+  };
 }
 
 function buildDesk(events: RawEvent[]): DeskResponse {
@@ -143,13 +245,46 @@ function buildDesk(events: RawEvent[]): DeskResponse {
   }
 
   priced.sort((a, b) => b.volume24h - a.volume24h);
-  const byVol = priced.slice(0, 200);
+
+  const btcAll = priced.filter((m) => isBitcoinSeries(m.seriesTicker));
+  const rest = priced.filter((m) => !isBitcoinSeries(m.seriesTicker));
+  const btcTape = buildBtcTape(btcAll);
+
+  const byVol = rest.slice(0, 200);
   const seen = new Set(byVol.map((m) => m.ticker));
-  const extra = priced
+  const extra = rest
     .filter((m) => !seen.has(m.ticker) && m.signal !== "hold" && m.volume24h >= 40)
     .sort((a, b) => b.score - a.score)
     .slice(0, 40);
-  const markets = [...byVol, ...extra].slice(0, DESK_SIZE);
+  const restMarkets = [...byVol, ...extra];
+
+  const btcKeep: DeskMarket[] = [];
+  const btcSeen = new Set<string>();
+  if (btcTape) {
+    for (const rung of btcTape.rungs) {
+      const row = btcAll.find((m) => m.ticker === rung.ticker);
+      if (row && !btcSeen.has(row.ticker)) {
+        btcKeep.push(row);
+        btcSeen.add(row.ticker);
+      }
+    }
+  }
+  const moreBtc = btcAll
+    .filter((m) => {
+      if (btcSeen.has(m.ticker)) return false;
+      const hourly =
+        m.seriesTicker.toUpperCase() === "KXBTCD" || m.seriesTicker.toUpperCase() === "KXBTC";
+      if (hourly) return m.mid >= 0.08 && m.mid <= 0.92 && m.volume24h >= 80;
+      return true;
+    })
+    .sort((a, b) => b.score - a.score || b.volume24h - a.volume24h);
+  for (const m of moreBtc) {
+    btcKeep.push(m);
+    btcSeen.add(m.ticker);
+    if (btcKeep.length >= 28) break;
+  }
+
+  const markets = [...restMarkets, ...btcKeep].slice(0, DESK_SIZE);
 
   const catMap = new Map<string, number>();
   for (const m of markets) {
@@ -176,6 +311,7 @@ function buildDesk(events: RawEvent[]): DeskResponse {
       medianAbsEdge,
       volume24h: markets.reduce((s, m) => s + m.volume24h, 0),
     },
+    btc: btcTape,
   };
 }
 
@@ -183,10 +319,16 @@ export const getDesk = createServerFn({ method: "GET" }).handler(async () => {
   if (deskCache && Date.now() - deskCache.at < DESK_TTL_MS) {
     return deskCache.data;
   }
-  const events = await loadEvents();
-  const data = buildDesk(events);
-  deskCache = { at: Date.now(), data };
-  return data;
+  try {
+    const general = await loadEvents();
+    const btc = await loadBtcEvents().catch(() => [] as RawEvent[]);
+    const data = buildDesk(mergeEvents(general, btc));
+    deskCache = { at: Date.now(), data };
+    return data;
+  } catch (err) {
+    if (deskCache?.data) return deskCache.data;
+    throw err;
+  }
 });
 
 type CandleRaw = {

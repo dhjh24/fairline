@@ -100,7 +100,9 @@ export function MarketDetailView({
             <span className="text-xs text-subtle">{m.category}</span>
             <span className="text-xs text-subtle">Closes {relativeClose(m.closeTime)}</span>
           </div>
-          <h1 className="text-2xl font-medium tracking-tight md:text-3xl">{m.title}</h1>
+          <h1 className="text-2xl font-medium tracking-tight md:text-3xl">
+            {m.strike && m.yesSubTitle ? m.yesSubTitle : m.title}
+          </h1>
           <p className="mt-1 text-sm text-muted">{m.eventTitle}</p>
         </div>
         <div className="flex items-center gap-2">

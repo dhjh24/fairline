@@ -69,7 +69,9 @@ export function DeskList({ markets }: { markets: DeskMarket[] }) {
                       <span className="text-xs text-subtle">Forecasting…</span>
                     ) : null}
                   </div>
-                  <p className="truncate text-sm font-medium text-fg">{m.title}</p>
+                  <p className="truncate text-sm font-medium text-fg">
+                    {m.yesSubTitle || m.title}
+                  </p>
                   <p className="truncate text-xs text-muted">{m.eventTitle}</p>
                   {forecasts[m.ticker] ? (
                     <ForecastLine market={m} forecast={forecasts[m.ticker]!} />

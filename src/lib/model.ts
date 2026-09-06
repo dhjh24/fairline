@@ -56,6 +56,7 @@ export type ModelInput = {
   volume24h: number;
   openInterest: number;
   bookImbalance?: number;
+  strike?: number;
 };
 
 export function priceMarket(input: ModelInput): DeskMarket {
@@ -223,6 +224,7 @@ export function priceMarket(input: ModelInput): DeskMarket {
     spread,
     tauDays: tau,
     factors,
+    strike: input.strike,
   };
 }
 

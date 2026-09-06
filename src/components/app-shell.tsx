@@ -117,6 +117,11 @@ export function AppShell({
                       <span className="text-fg">Tape and book.</span> Last-versus-mid and
                       order-book imbalance, scaled by liquidity.
                     </li>
+                    <li>
+                      <span className="text-fg">Bitcoin tape.</span> Hourly above/below
+                      contracts are pulled in separately. Implied BTC is the strike where
+                      the live ladder crosses 50¢.
+                    </li>
                   </ol>
                   <p>
                     A YES or NO signal fires only when expected value after the ask/bid is

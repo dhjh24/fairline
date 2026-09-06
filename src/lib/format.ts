@@ -66,3 +66,12 @@ export function usd(n: number): string {
   const sign = n > 0 ? "+" : n < 0 ? "−" : "";
   return `${sign}$${Math.abs(n).toFixed(2)}`;
 }
+
+export function usdPrice(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: n >= 100 ? 0 : 2,
+  }).format(n);
+}

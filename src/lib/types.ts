@@ -40,6 +40,7 @@ export type DeskMarket = {
   spread: number;
   tauDays: number;
   factors: Factor[];
+  strike?: number;
 };
 
 export type DeskStats = {
@@ -63,6 +64,27 @@ export type DeskResponse = {
   markets: DeskMarket[];
   categories: CategoryCount[];
   stats: DeskStats;
+  btc?: BtcTape | null;
+};
+
+export type BtcRung = {
+  ticker: string;
+  strike: number;
+  label: string;
+  mid: number;
+  fair: number;
+  signal: Signal;
+  edge: number;
+  volume24h: number;
+};
+
+export type BtcTape = {
+  implied: number;
+  closeTime: string;
+  eventTicker: string;
+  eventTitle: string;
+  seriesTicker: string;
+  rungs: BtcRung[];
 };
 
 export type Candle = {
