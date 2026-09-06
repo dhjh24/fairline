@@ -28,6 +28,18 @@ Lots live in the browser (`localStorage`). Clearing site data clears the book.
 
 TanStack Start, React 19, Tailwind v4. Live books come from Kalshi’s public trade API. Grok overlay uses the xAI API when `XAI_API_KEY` is set.
 
+## Self-host
+
+Fairline is a single container. Copy `.env.example` to `.env`, add your `XAI_API_KEY` if you want Grok forecasts, then:
+
+```sh
+docker compose up -d --build
+```
+
+The desk listens on port 8080. Paper blotter and watchlist stay in the browser; nothing is written to a database. Rebuild after pulling to pick up model or tape changes.
+
+Without Docker: `npm ci && NITRO_PRESET=node-server npm run build && npm start`.
+
 ## Disclaimer
 
 Not financial advice. Model estimates are not a promise of settlement. Kalshi is a CFTC-regulated exchange; trade there at your own risk.
