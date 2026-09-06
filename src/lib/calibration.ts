@@ -33,6 +33,10 @@ export type ScoredRow = QuoteSnap & {
   result: "yes" | "no";
   y: 0 | 1;
   brier: number;
+  marketBrier: number;
+  skill: number;
+  leadSec: number;
+  informative: boolean;
   grokBrier?: number;
   signalHit?: boolean;
   sideHit: boolean;
@@ -126,11 +130,22 @@ export function scoredRows(
     const signalHit =
       snap.signal === "hold" ? undefined : snap.signal === "yes" ? y === 1 : y === 0;
     const sideHit = snap.fair === snap.mid ? y === (snap.mid >= 0.5 ? 1 : 0) : snap.fair > snap.mid ? y === 1 : y === 0;
+    const close = Date.parse(snap.closeTime);
+    const snapped = Date.parse(snap.snappedAt);
+    const leadSec =
+      Number.isFinite(close) && Number.isFinite(snapped) ? (close - snapped) / 1000 : 0;
+    const marketBrier = brier(snap.mid, y);
+    const modelBrier = brier(snap.fair, y);
+    const informative = snap.mid > 0.08 && snap.mid < 0.92 && leadSec >= 90;
     out.push({
       ...snap,
       result: v.result,
       y,
-      brier: brier(snap.fair, y),
+      brier: modelBrier,
+      marketBrier,
+      skill: marketBrier - modelBrier,
+      leadSec,
+      informative,
       grokBrier: snap.grok != null ? brier(snap.grok, y) : undefined,
       signalHit,
       sideHit,
@@ -151,6 +166,12 @@ export type Bin = {
 export type CalSummary = {
   n: number;
   brier: number;
+  marketBrier: number;
+  skill: number;
+  honestN: number;
+  honestBrier: number;
+  honestMarketBrier: number;
+  honestSkill: number;
   grokN: number;
   grokBrier: number;
   signalN: number;
@@ -168,12 +189,13 @@ export function summarize(rows: ScoredRow[]): CalSummary {
   const signals = rows.filter((r) => r.signalHit !== undefined);
   const fifteen = rows.filter((r) => isFifteenCrypto(r.seriesTicker));
   const grok = rows.filter((r) => r.grokBrier != null);
+  const honest = rows.filter((r) => r.informative);
   const edges = [0, 0.2, 0.4, 0.6, 0.8, 1.0001];
   const bins: Bin[] = [];
   for (let i = 0; i < edges.length - 1; i++) {
     const lo = edges[i]!;
     const hi = edges[i + 1]!;
-    const inBin = rows.filter((r) => r.fair >= lo && r.fair < hi);
+    const inBin = honest.filter((r) => r.fair >= lo && r.fair < hi);
     const avgFair = mean(inBin.map((r) => r.fair));
     const freq = mean(inBin.map((r) => r.y));
     bins.push({ lo, hi: i === edges.length - 2 ? 1 : hi, n: inBin.length, avgFair, freq });
@@ -181,6 +203,12 @@ export function summarize(rows: ScoredRow[]): CalSummary {
   return {
     n,
     brier: mean(rows.map((r) => r.brier)),
+    marketBrier: mean(rows.map((r) => r.marketBrier)),
+    skill: mean(rows.map((r) => r.skill)),
+    honestN: honest.length,
+    honestBrier: mean(honest.map((r) => r.brier)),
+    honestMarketBrier: mean(honest.map((r) => r.marketBrier)),
+    honestSkill: mean(honest.map((r) => r.skill)),
     grokN: grok.length,
     grokBrier: mean(grok.map((r) => r.grokBrier ?? 0)),
     signalN: signals.length,

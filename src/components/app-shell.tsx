@@ -33,7 +33,9 @@ export function AppShell({
   const verdicts = useCalibration((s) => s.verdicts);
   const calBrier = useMemo(() => {
     const rows = scoredRows(snaps, verdicts);
-    return rows.length ? summarize(rows).brier : null;
+    if (!rows.length) return null;
+    const s = summarize(rows);
+    return s.honestN ? s.honestBrier : s.brier;
   }, [snaps, verdicts]);
 
   useEffect(() => {
@@ -127,6 +129,8 @@ export function AppShell({
                     <li>
                       <span className="text-fg">Longshot calibration.</span> A power map
                       (γ 1.14) trims overbet longshots and lifts underbet favorites.
+                      It is skipped on 15-minute Bitcoin and Ethereum — those prints
+                      should not be faded toward 0/1.
                     </li>
                     <li>
                       <span className="text-fg">Liquidity gate.</span> Thin books
@@ -136,6 +140,8 @@ export function AppShell({
                     <li>
                       <span className="text-fg">Time convexity.</span> Near-dated contracts
                       are pushed toward 0/1; long-dated illiquid ones fade slightly.
+                      Hourly and 15-minute crypto skip this — the ladder already has time
+                      in it.
                     </li>
                     <li>
                       <span className="text-fg">Tape and book.</span> Last-versus-mid and

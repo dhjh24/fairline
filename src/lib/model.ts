@@ -1,4 +1,5 @@
 import type { DeskMarket, Factor, OrderBook, Signal } from "@/lib/types";
+import { isFifteenCrypto, isHourlyCrypto } from "@/lib/crypto";
 import { clamp01, dollars, marketMid, tauDays } from "@/lib/kalshi";
 
 const GAMMA = 1.14;
@@ -90,17 +91,38 @@ export function priceMarket(input: ModelInput): DeskMarket {
   }
   p = afterVig;
 
-  const afterCal = powerCalibrate(p);
-  factors.push({
-    id: "cal",
-    label: "Longshot calibration",
-    delta: afterCal - p,
-    detail: "Power map (γ 1.14) trims longshots and lifts favorites.",
-  });
-  p = afterCal;
+  const cryptoShort = isFifteenCrypto(input.seriesTicker) || isHourlyCrypto(input.seriesTicker);
+  const fifteen = isFifteenCrypto(input.seriesTicker);
+
+  if (!fifteen) {
+    const afterCal = powerCalibrate(p);
+    factors.push({
+      id: "cal",
+      label: "Longshot calibration",
+      delta: afterCal - p,
+      detail: "Power map (γ 1.14) trims longshots and lifts favorites.",
+    });
+    p = afterCal;
+  } else {
+    factors.push({
+      id: "cal",
+      label: "Longshot calibration",
+      delta: 0,
+      detail: "Skipped on 15-minute crypto. The CF print is already the strike.",
+    });
+  }
 
   let afterTime = p;
-  if (tau < 10) {
+  if (cryptoShort) {
+    factors.push({
+      id: "time",
+      label: "Near-expiry convexity",
+      delta: 0,
+      detail: fifteen
+        ? "Skipped on 15-minute prints. Fading a live coin toward 0/1 is the wrong prior."
+        : "Skipped on hourly crypto rungs. The ladder already encodes time.",
+    });
+  } else if (tau < 10) {
     const ext = 0.1 * (1 - tau / 10) * L;
     afterTime = p + ext * (p - 0.5) * 2;
     factors.push({

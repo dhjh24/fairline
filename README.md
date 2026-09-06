@@ -26,7 +26,7 @@ Lots live in the browser (`localStorage`). Clearing site data clears the book.
 
 The **paper bot** can take Fairline signals automatically (15-minute crypto, fast books, or every signal). It fills at the touch, half-Kelly, on the same $1,000 paper book. It is not a Kalshi order.
 
-Export CSV or JSON from the blotter and the calibration page (lots, marks, P&L, Brier scores, snapshots).
+Export CSV or JSON from the blotter and the calibration page (lots, marks, P&L, Brier scores, snapshots). Headline calibration uses the honest set: books still between 8¢ and 92¢, snapped at least 90 seconds before close.
 
 ## Calibration
 

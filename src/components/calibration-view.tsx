@@ -12,15 +12,16 @@ import { useBot } from "@/lib/bot";
 import { pct, relativeClose, usdTarget } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-type Filter = "all" | "fifteen" | "signals";
+type Filter = "honest" | "all" | "fifteen" | "signals";
 
 export function CalibrationView() {
   const snaps = useCalibration((s) => s.snaps);
   const verdicts = useCalibration((s) => s.verdicts);
-  const [filter, setFilter] = useState<Filter>("all");
+  const [filter, setFilter] = useState<Filter>("honest");
 
   const scored = useMemo(() => scoredRows(snaps, verdicts), [snaps, verdicts]);
   const visible = useMemo(() => {
+    if (filter === "honest") return scored.filter((r) => r.informative);
     if (filter === "fifteen") return scored.filter((r) => isFifteenCrypto(r.seriesTicker));
     if (filter === "signals") return scored.filter((r) => r.signal !== "hold");
     return scored;
@@ -46,27 +47,38 @@ export function CalibrationView() {
         <h1 className="text-3xl font-medium tracking-tight md:text-4xl">Calibration</h1>
         <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted">
           Live quotes are snapshotted as the desk refreshes. After Kalshi settles, Fairline
-          scores the last fair against YES=1 / NO=0. Lower Brier is better. Paper lots on
-          those tickers settle automatically.
+          scores fair against YES=1 / NO=0. Headline numbers use the honest set: mid still
+          between 8¢ and 92¢, and the snapshot at least 90 seconds before close. Slam-dunk
+          99¢ rungs do not count as skill. Paper lots on scored tickers settle automatically.
         </p>
       </div>
 
       <section className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-        <Stat label="Scored" value={String(allStats.n)} hint={pending ? `${pending} waiting` : "snapshots"} />
         <Stat
-          label="Brier"
-          value={allStats.n ? allStats.brier.toFixed(3) : "—"}
-          hint="(fair − outcome)²"
+          label="Honest"
+          value={`${allStats.honestN}/${allStats.n}`}
+          hint={pending ? `${pending} waiting` : "live vs all"}
+        />
+        <Stat
+          label="Model Brier"
+          value={allStats.honestN ? allStats.honestBrier.toFixed(3) : allStats.n ? allStats.brier.toFixed(3) : "—"}
+          hint="lower is better"
+        />
+        <Stat
+          label="vs market"
+          value={
+            allStats.honestN
+              ? `${allStats.honestSkill >= 0 ? "+" : ""}${allStats.honestSkill.toFixed(3)}`
+              : allStats.n
+                ? `${allStats.skill >= 0 ? "+" : ""}${allStats.skill.toFixed(3)}`
+                : "—"
+          }
+          hint="market Brier − model"
         />
         <Stat
           label="15m Brier"
           value={allStats.fifteenN ? allStats.fifteenBrier.toFixed(3) : "—"}
           hint={`${allStats.fifteenN} prints`}
-        />
-        <Stat
-          label="Side"
-          value={allStats.n ? pct(allStats.sideHits / allStats.n, 0) : "—"}
-          hint="fair vs mid"
         />
         <Stat
           label="Signals"
@@ -78,9 +90,9 @@ export function CalibrationView() {
           hint="buy YES/NO hits"
         />
         <Stat
-          label="Grok Brier"
-          value={allStats.grokN ? allStats.grokBrier.toFixed(3) : "—"}
-          hint={allStats.grokN ? `${allStats.grokN} overlays` : "run a forecast"}
+          label="Side"
+          value={allStats.n ? pct(allStats.sideHits / allStats.n, 0) : "—"}
+          hint="fair vs mid"
         />
       </section>
 
@@ -129,6 +141,7 @@ export function CalibrationView() {
       <div className="flex flex-wrap gap-2">
         {(
           [
+            ["honest", "Honest"],
             ["all", "All scored"],
             ["fifteen", "15-minute"],
             ["signals", "Signals"],
@@ -208,6 +221,15 @@ export function CalibrationView() {
                   </span>
                   <span className="text-sm tabular-nums md:col-span-2 md:text-right">
                     {r.brier.toFixed(3)}
+                    <span
+                      className={cn(
+                        "ml-1 text-xs",
+                        r.skill > 0.002 ? "text-yes" : r.skill < -0.002 ? "text-no" : "text-subtle",
+                      )}
+                    >
+                      {r.skill >= 0 ? "+" : ""}
+                      {r.skill.toFixed(3)}
+                    </span>
                   </span>
                   <span className="hidden text-xs text-subtle md:col-span-1 md:block md:text-right">
                     {relativeClose(r.closeTime)}
