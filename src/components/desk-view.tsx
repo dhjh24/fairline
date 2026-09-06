@@ -1,5 +1,6 @@
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { BotBar } from "@/components/bot-bar";
 import { Crypto15Card } from "@/components/crypto-15";
 import { CryptoTapeCard } from "@/components/crypto-tape";
 import { DeskList } from "@/components/desk-list";
@@ -10,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { isBitcoinSeries, isEthereumSeries, isFifteenCrypto, isHourlyCrypto } from "@/lib/crypto";
 import { useBlotter } from "@/lib/blotter";
+import { proposeBotFills, useBot } from "@/lib/bot";
 import { useCalibration, type QuoteSnap } from "@/lib/calibration";
 import { useForecasts } from "@/lib/forecasts";
 import type { CryptoFifteen, DeskMarket, DeskResponse } from "@/lib/types";
@@ -53,6 +55,11 @@ export function DeskView({
   const watch = useWatchlist((s) => s.tickers);
   const applyMarks = useBlotter((s) => s.applyMarks);
   const lots = useBlotter((s) => s.lots);
+  const openLot = useBlotter((s) => s.openLot);
+  const botOn = useBot((s) => s.on);
+  const botUniverse = useBot((s) => s.universe);
+  const botHydrated = useBot((s) => s.hydrated);
+  const botNote = useBot((s) => s.note);
   const capture = useCalibration((s) => s.capture);
   const grokByTicker = useForecasts((s) => s.byTicker);
 
@@ -90,6 +97,24 @@ export function DeskView({
     }
     capture(rows);
   }, [data, watch, lots, capture, grokByTicker]);
+
+  useEffect(() => {
+    if (!data || !botOn || !botHydrated) return;
+    const intents = proposeBotFills(data.markets, lots, botUniverse);
+    if (intents.length === 0) return;
+    let filled = 0;
+    for (const intent of intents) {
+      const res = openLot(intent);
+      if (res.ok) filled += 1;
+      else break;
+    }
+    if (filled > 0) {
+      botNote(
+        `Paper-filled ${filled} ${botUniverse === "fifteen" ? "15m" : botUniverse} ticket${filled === 1 ? "" : "s"}.`,
+        filled,
+      );
+    }
+  }, [data, botOn, botHydrated, botUniverse, lots, openLot, botNote]);
 
   const markets = useMemo(() => {
     if (!data) return [];
@@ -151,6 +176,7 @@ export function DeskView({
       {data ? (
         <>
           <StatStrip stats={data.stats} asOf={data.asOf} />
+          <BotBar />
           {data.btc || data.eth ? (
             <div className={cn("grid gap-4", data.btc && data.eth ? "lg:grid-cols-2" : "")}>
               {data.btc ? <CryptoTapeCard tape={data.btc} /> : null}

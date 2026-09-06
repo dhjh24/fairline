@@ -15,7 +15,7 @@ import {
 import { pct, relativeClose, usd } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-type Filter = "open" | "closed" | "all";
+type Filter = "open" | "closed" | "bot" | "manual" | "all";
 
 export function BlotterView() {
   const lots = useBlotter((s) => s.lots);
@@ -30,6 +30,8 @@ export function BlotterView() {
     const rows = lots.filter((l) => l.closeReason !== "void");
     if (filter === "open") return rows.filter((l) => l.status === "open");
     if (filter === "closed") return rows.filter((l) => l.status === "closed");
+    if (filter === "bot") return rows.filter((l) => l.source === "bot");
+    if (filter === "manual") return rows.filter((l) => l.source !== "bot");
     return rows;
   }, [lots, filter]);
 
@@ -41,8 +43,9 @@ export function BlotterView() {
         <div>
           <h1 className="text-3xl font-medium tracking-tight md:text-4xl">Paper blotter</h1>
           <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted">
-            Hypothetical fills at the touch. Open lots mark to Kalshi's mid and to
-            Fairline's fair as the desk refreshes. Starting cash ${STARTING_CASH.toLocaleString()}.
+            Hypothetical fills at the touch. The paper bot takes Fairline signals
+            on its own; open lots mark to Kalshi's mid and to Fairline's fair.
+            Starting cash ${STARTING_CASH.toLocaleString()}.
           </p>
         </div>
       </div>
@@ -69,6 +72,8 @@ export function BlotterView() {
           [
             ["open", "Open"],
             ["closed", "Closed"],
+            ["bot", "Bot"],
+            ["manual", "Manual"],
             ["all", "All lots"],
           ] as const
         ).map(([id, label]) => (
@@ -109,7 +114,8 @@ export function BlotterView() {
         <div className="rounded-xl bg-surface px-6 py-16 text-center shadow-[var(--shadow-border)]">
           <p className="text-sm text-muted">No paper fills yet.</p>
           <p className="mt-2 text-sm text-subtle">
-            Open a market, size a ticket, and tap Log paper fill.
+            Open a market, size a ticket, and tap Log paper fill — or start the paper
+            bot on the desk.
           </p>
           <Button asChild className="mt-4">
             <Link to="/">Back to the desk</Link>
@@ -206,6 +212,9 @@ function LotRow({
           >
             {lot.side.toUpperCase()}
           </span>
+          {lot.source === "bot" ? (
+            <span className="text-xs font-medium tracking-wide text-subtle uppercase">Bot</span>
+          ) : null}
           {lot.status === "closed" ? (
             <span className="text-xs text-subtle">
               {lot.closeReason === "flatten"

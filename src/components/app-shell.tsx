@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { STARTING_CASH, blotterTotals, useBlotter } from "@/lib/blotter";
 import { scoredRows, summarize, useCalibration } from "@/lib/calibration";
+import { useBot } from "@/lib/bot";
 import { useForecasts } from "@/lib/forecasts";
 import { useWatchlist } from "@/lib/watchlist";
 import { SettlementLoop } from "@/components/settlement-loop";
@@ -22,6 +23,7 @@ export function AppShell({
   const hydrateBook = useBlotter((s) => s.hydrate);
   const hydrateForecasts = useForecasts((s) => s.hydrate);
   const hydrateCal = useCalibration((s) => s.hydrate);
+  const hydrateBot = useBot((s) => s.hydrate);
   const lots = useBlotter((s) => s.lots);
   const marks = useBlotter((s) => s.marks);
   const totals = blotterTotals(lots, marks);
@@ -39,7 +41,8 @@ export function AppShell({
     hydrateBook();
     hydrateForecasts();
     hydrateCal();
-  }, [hydrateWatch, hydrateBook, hydrateForecasts, hydrateCal]);
+    hydrateBot();
+  }, [hydrateWatch, hydrateBook, hydrateForecasts, hydrateCal, hydrateBot]);
 
   return (
     <div className="min-h-dvh bg-bg text-fg">
@@ -149,6 +152,12 @@ export function AppShell({
                       snapshots fair vs mid. After Kalshi settles, Fairline scores Brier
                       and whether the signal was right. Paper lots on those tickers close
                       at 100 or 0.
+                    </li>
+                    <li>
+                      <span className="text-fg">Paper bot.</span> Optional. It buys YES at
+                      the ask or NO at the bid when Fairline fires a signal, sized at
+                      half-Kelly. Fills never go to Kalshi. P&L marks as the desk
+                      refreshes and closes when the contract settles.
                     </li>
                   </ol>
                   <p>

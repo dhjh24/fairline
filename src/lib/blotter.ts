@@ -6,6 +6,8 @@ export const STARTING_CASH = 1_000;
 export type LotSide = "yes" | "no";
 export type CloseReason = "flatten" | "settle-yes" | "settle-no" | "void";
 
+export type LotSource = "manual" | "bot";
+
 export type BlotterLot = {
   id: string;
   ticker: string;
@@ -25,6 +27,7 @@ export type BlotterLot = {
   closedAt?: string;
   exitPrice?: number;
   closeReason?: CloseReason;
+  source?: LotSource;
 };
 
 export type TickerMark = {
@@ -46,6 +49,7 @@ export type OpenIntent = {
   fillPrice: number;
   fairAtEntry: number;
   midAtEntry: number;
+  source?: LotSource;
 };
 
 type Persisted = {
@@ -230,6 +234,7 @@ export const useBlotter = create<BlotterState>((set, get) => ({
       midAtEntry: intent.midAtEntry,
       openedAt: new Date().toISOString(),
       status: "open",
+      source: intent.source ?? "manual",
     };
     set((s) => {
       const lots = s.hydrated ? s.lots : snap.lots;
