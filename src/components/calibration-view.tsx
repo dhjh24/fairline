@@ -6,6 +6,9 @@ import { Button } from "@/components/ui/button";
 import { isFifteenCrypto } from "@/lib/crypto";
 import { scoredRows, summarize, useCalibration } from "@/lib/calibration";
 import { getSettlements } from "@/lib/desk-fn";
+import { exportBookJson, exportScoresCsv } from "@/lib/export";
+import { useBlotter } from "@/lib/blotter";
+import { useBot } from "@/lib/bot";
 import { pct, relativeClose, usdTarget } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -26,6 +29,9 @@ export function CalibrationView() {
   const allStats = useMemo(() => summarize(scored), [scored]);
 
   const pending = Object.keys(snaps).filter((t) => !verdicts[t]).length;
+  const lots = useBlotter((s) => s.lots);
+  const marks = useBlotter((s) => s.marks);
+  const bot = useBot();
 
   const hist = useQuery({
     queryKey: ["settlements", "history"],
@@ -138,6 +144,35 @@ export function CalibrationView() {
             {label}
           </Button>
         ))}
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => exportScoresCsv(visible.length ? visible : scored)}
+          disabled={scored.length === 0}
+        >
+          Export CSV
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() =>
+            exportBookJson({
+              lots,
+              marks,
+              snaps,
+              verdicts,
+              scored,
+              bot: {
+                on: bot.on,
+                universe: bot.universe,
+                sessionFills: bot.sessionFills,
+                lastNote: bot.lastNote,
+              },
+            })
+          }
+        >
+          Export JSON
+        </Button>
       </div>
 
       {visible.length > 0 ? (

@@ -12,6 +12,9 @@ import {
   type BlotterLot,
   type CloseReason,
 } from "@/lib/blotter";
+import { scoredRows, useCalibration } from "@/lib/calibration";
+import { useBot } from "@/lib/bot";
+import { exportBlotterCsv, exportBookJson } from "@/lib/export";
 import { pct, relativeClose, usd } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -23,6 +26,9 @@ export function BlotterView() {
   const closeLot = useBlotter((s) => s.closeLot);
   const voidLot = useBlotter((s) => s.voidLot);
   const reset = useBlotter((s) => s.reset);
+  const snaps = useCalibration((s) => s.snaps);
+  const verdicts = useCalibration((s) => s.verdicts);
+  const bot = useBot();
   const [filter, setFilter] = useState<Filter>("open");
   const totals = useMemo(() => blotterTotals(lots, marks), [lots, marks]);
 
@@ -87,6 +93,35 @@ export function BlotterView() {
             {label}
           </Button>
         ))}
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => exportBlotterCsv(lots, marks)}
+          disabled={visibleLots.length === 0}
+        >
+          Export CSV
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() =>
+            exportBookJson({
+              lots,
+              marks,
+              snaps,
+              verdicts,
+              scored: scoredRows(snaps, verdicts),
+              bot: {
+                on: bot.on,
+                universe: bot.universe,
+                sessionFills: bot.sessionFills,
+                lastNote: bot.lastNote,
+              },
+            })
+          }
+        >
+          Export JSON
+        </Button>
         {visibleLots.length > 0 ? (
           <Dialog>
             <DialogTrigger asChild>

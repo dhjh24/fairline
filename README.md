@@ -26,6 +26,8 @@ Lots live in the browser (`localStorage`). Clearing site data clears the book.
 
 The **paper bot** can take Fairline signals automatically (15-minute crypto, fast books, or every signal). It fills at the touch, half-Kelly, on the same $1,000 paper book. It is not a Kalshi order.
 
+Export CSV or JSON from the blotter and the calibration page (lots, marks, P&L, Brier scores, snapshots).
+
 ## Calibration
 
 The desk snapshots fair vs mid on each refresh (15-minute crypto, tape rungs, signals, watchlist, open paper lots). After Kalshi settles, Fairline scores Brier, whether the model was on the right side of the market, and whether a YES/NO signal hit. Paper lots on scored tickers settle at 100 or 0. Nothing is stored on a server.
