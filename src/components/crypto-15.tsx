@@ -1,17 +1,18 @@
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { SignalBadge } from "@/components/signal-badge";
-import { clockRemain, compact, pct, usdTarget } from "@/lib/format";
+import { clockRemain, compact, pct, relativeClose, usdTarget } from "@/lib/format";
 import type { CryptoFifteen } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export function Crypto15Card({ print }: { print: CryptoFifteen }) {
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState<number | null>(null);
   useEffect(() => {
+    setNow(Date.now());
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, []);
-  const remain = clockRemain(print.closeTime, now);
+  const remain = now === null ? relativeClose(print.closeTime) : clockRemain(print.closeTime, now);
   const gap = print.fair - print.mid;
   const up = print.mid >= 0.5;
 
