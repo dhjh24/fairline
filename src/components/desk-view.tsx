@@ -1,6 +1,7 @@
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { DeskList } from "@/components/desk-list";
+import { ForecastBar } from "@/components/forecast-bar";
 import { StatStrip } from "@/components/stat-strip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -160,6 +161,8 @@ export function DeskView({
               </span>
             </div>
           </div>
+
+          <ForecastBar markets={markets} />
 
           <DeskList markets={markets} />
         </>

@@ -4,6 +4,7 @@ import { useEffect, type ReactNode } from "react";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { STARTING_CASH, blotterTotals, useBlotter } from "@/lib/blotter";
+import { useForecasts } from "@/lib/forecasts";
 import { useWatchlist } from "@/lib/watchlist";
 import { usd } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -17,6 +18,7 @@ export function AppShell({
 }) {
   const hydrateWatch = useWatchlist((s) => s.hydrate);
   const hydrateBook = useBlotter((s) => s.hydrate);
+  const hydrateForecasts = useForecasts((s) => s.hydrate);
   const lots = useBlotter((s) => s.lots);
   const marks = useBlotter((s) => s.marks);
   const totals = blotterTotals(lots, marks);
@@ -26,7 +28,8 @@ export function AppShell({
   useEffect(() => {
     hydrateWatch();
     hydrateBook();
-  }, [hydrateWatch, hydrateBook]);
+    hydrateForecasts();
+  }, [hydrateWatch, hydrateBook, hydrateForecasts]);
 
   return (
     <div className="min-h-dvh bg-bg text-fg">
@@ -118,8 +121,9 @@ export function AppShell({
                   <p>
                     A YES or NO signal fires only when expected value after the ask/bid is
                     at least 2¢ and the book is liquid enough. Grok forecasts are optional
-                    and only run when you ask. The blotter is paper — fills never go to
-                    Kalshi.
+                    and only run when you ask — one contract, or a batch of the top eight
+                    on the desk. Pick Grok 4.6, 4.5, or 4.3. The blotter is paper — fills
+                    never go to Kalshi.
                   </p>
                   <p className="text-xs">
                     Not financial advice. These are model estimates, not a promise of

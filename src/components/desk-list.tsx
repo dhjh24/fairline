@@ -5,6 +5,7 @@ import { StarButton } from "@/components/star-button";
 import { ProbBar } from "@/components/prob-bar";
 import { compact, pct, relativeClose, signedCents } from "@/lib/format";
 import { useBlotter } from "@/lib/blotter";
+import { useForecasts } from "@/lib/forecasts";
 import type { DeskMarket } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -20,6 +21,8 @@ function EdgeCell({ market }: { market: DeskMarket }) {
 
 export function DeskList({ markets }: { markets: DeskMarket[] }) {
   const lots = useBlotter((s) => s.lots);
+  const forecasts = useForecasts((s) => s.byTicker);
+  const running = useForecasts((s) => s.running);
   const openTickers = useMemo(() => {
     const set = new Set<string>();
     for (const lot of lots) {
@@ -62,9 +65,15 @@ export function DeskList({ markets }: { markets: DeskMarket[] }) {
                     {openTickers.has(m.ticker) ? (
                       <span className="text-xs text-fg">In blotter</span>
                     ) : null}
+                    {running.includes(m.ticker) ? (
+                      <span className="text-xs text-subtle">Forecasting…</span>
+                    ) : null}
                   </div>
                   <p className="truncate text-sm font-medium text-fg">{m.title}</p>
                   <p className="truncate text-xs text-muted">{m.eventTitle}</p>
+                  {forecasts[m.ticker] ? (
+                    <ForecastLine market={m} forecast={forecasts[m.ticker]!} />
+                  ) : null}
                 </div>
               </div>
 
@@ -97,5 +106,30 @@ export function DeskList({ markets }: { markets: DeskMarket[] }) {
         ))}
       </ul>
     </div>
+  );
+}
+
+function ForecastLine({
+  market,
+  forecast,
+}: {
+  market: DeskMarket;
+  forecast: { probability: number; blended: number };
+}) {
+  const grokSide = forecast.probability >= market.mid ? "yes" : "no";
+  const agrees =
+    market.signal === "hold" ? null : grokSide === market.signal ? "Agrees" : "Disagrees";
+  return (
+    <p className="mt-1 truncate text-xs text-subtle">
+      Grok {pct(forecast.probability, 0)}
+      <span className="text-subtle"> · </span>
+      blend {pct(forecast.blended, 0)}
+      {agrees ? (
+        <>
+          <span className="text-subtle"> · </span>
+          <span className={agrees === "Agrees" ? "text-yes" : "text-no"}>{agrees}</span>
+        </>
+      ) : null}
+    </p>
   );
 }

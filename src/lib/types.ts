@@ -101,6 +101,8 @@ export type GrokForecast =
       factors: GrokFactor[];
       risks: string[];
       blended: number;
+      providerId?: string;
+      model?: string;
     }
   | { ok: false; error: string };
 

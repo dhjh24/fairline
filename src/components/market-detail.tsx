@@ -12,6 +12,7 @@ import { StarButton } from "@/components/star-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBlotter } from "@/lib/blotter";
+import { useForecasts } from "@/lib/forecasts";
 import { compact, formatClose, pct, pp, relativeClose, signedCents } from "@/lib/format";
 import { kalshiMarketUrl } from "@/lib/kalshi";
 import type { GrokForecast, MarketDetail } from "@/lib/types";
@@ -30,6 +31,7 @@ export function MarketDetailView({
 }) {
   const [grok, setGrok] = useState<Extract<GrokForecast, { ok: true }> | null>(null);
   const applyMarks = useBlotter((s) => s.applyMarks);
+  const cached = useForecasts((s) => (data ? s.byTicker[data.market.ticker] : undefined));
 
   useEffect(() => {
     if (!data) return;
@@ -37,6 +39,21 @@ export function MarketDetailView({
       { ticker: data.market.ticker, mid: data.market.mid, fair: data.market.fair },
     ]);
   }, [data, applyMarks]);
+
+  useEffect(() => {
+    if (!cached) return;
+    setGrok({
+      ok: true,
+      probability: cached.probability,
+      confidence: cached.confidence,
+      thesis: cached.thesis,
+      factors: cached.factors,
+      risks: cached.risks,
+      blended: cached.blended,
+      providerId: cached.providerId,
+      model: cached.model,
+    });
+  }, [cached]);
 
   if (loading && !data) {
     return (

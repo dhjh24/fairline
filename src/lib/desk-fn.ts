@@ -1,6 +1,13 @@
 import { createServerFn } from "@tanstack/react-start";
 import { KALSHI_API, dollars, type RawEvent, type RawMarket } from "@/lib/kalshi";
-import { blendWithGrok, parseBook, priceMarket, type ModelInput } from "@/lib/model";
+import {
+  BATCH_SIZE,
+  forecastMarketCached,
+  getProvider,
+  mapPool,
+  type ForecastSnapshot,
+} from "@/lib/llm";
+import { parseBook, priceMarket, type ModelInput } from "@/lib/model";
 import type {
   Candle,
   CategoryCount,
@@ -412,94 +419,47 @@ export const runGrokForecast = createServerFn({ method: "POST" })
       fieldSize: number;
       fieldSum: number;
       rules: string;
+      providerId?: string;
     }) => input,
   )
   .handler(async ({ data }): Promise<GrokForecast> => {
-    const apiKey = process.env.XAI_API_KEY;
-    if (!apiKey) return { ok: false, error: "Grok is not available in this environment." };
+    return forecastMarketCached(
+      {
+        ticker: data.ticker,
+        title: data.title,
+        eventTitle: data.eventTitle,
+        category: data.category,
+        closeTime: data.closeTime,
+        bid: data.bid,
+        ask: data.ask,
+        last: data.last,
+        fair: data.fair,
+        fieldSize: data.fieldSize,
+        fieldSum: data.fieldSum,
+        rules: data.rules,
+      },
+      data.providerId,
+    );
+  });
 
-    const m = data;
-    const prompt = [
-      "You are a calibrated superforecaster pricing a Kalshi YES/NO event contract.",
-      "Estimate the true probability that YES settles, independently of the market price.",
-      "Be well-calibrated. Avoid 0.50 unless the event is truly a coin flip. Do not parrot the market.",
-      "Return JSON only with keys: probability (0-1 number), confidence (0-1), thesis (2-4 sentences),",
-      'factors (array of {name, direction: "up"|"down", note}), risks (string array).',
-      "",
-      `Title: ${m.title}`,
-      `Event: ${m.eventTitle}`,
-      `Category: ${m.category}`,
-      `Closes: ${m.closeTime}`,
-      `Market bid/ask/last: ${m.bid} / ${m.ask} / ${m.last}`,
-      `Statistical fair value: ${m.fair.toFixed(4)}`,
-      `Mutually exclusive field size: ${m.fieldSize}, sum of mids: ${m.fieldSum.toFixed(3)}`,
-      m.rules ? `Rules: ${m.rules.slice(0, 1200)}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
+export type BatchForecastItem = {
+  ticker: string;
+  forecast: GrokForecast;
+};
 
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 22_000);
-    try {
-      const res = await fetch("https://api.x.ai/v1/chat/completions", {
-        method: "POST",
-        signal: ctrl.signal,
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: "grok-4.5",
-          temperature: 0.2,
-          max_tokens: 700,
-          response_format: { type: "json_object" },
-          messages: [
-            { role: "system", content: "You output only valid JSON. No markdown." },
-            { role: "user", content: prompt },
-          ],
-        }),
-      });
-      if (!res.ok) {
-        return { ok: false, error: `Grok request failed (${res.status}).` };
-      }
-
-      const body = (await res.json()) as {
-        choices?: { message?: { content?: string } }[];
-      };
-      const text = body.choices?.[0]?.message?.content ?? "";
-      const parsed = JSON.parse(text) as {
-        probability?: number;
-        confidence?: number;
-        thesis?: string;
-        factors?: { name?: string; direction?: string; note?: string }[];
-        risks?: string[];
-      };
-      const probability = Number(parsed.probability);
-      const confidence = Number(parsed.confidence);
-      if (!Number.isFinite(probability)) {
-        return { ok: false, error: "Grok returned an unreadable probability." };
-      }
-      const p = Math.min(0.99, Math.max(0.01, probability));
-      const c = Number.isFinite(confidence) ? Math.min(1, Math.max(0, confidence)) : 0.5;
-      return {
-        ok: true,
-        probability: p,
-        confidence: c,
-        thesis: String(parsed.thesis ?? "").slice(0, 1200),
-        factors: (parsed.factors ?? []).slice(0, 6).map((f) => ({
-          name: String(f.name ?? "Factor"),
-          direction: f.direction === "down" ? "down" : "up",
-          note: String(f.note ?? "").slice(0, 240),
-        })),
-        risks: (parsed.risks ?? []).slice(0, 5).map((r) => String(r).slice(0, 240)),
-        blended: blendWithGrok(m.fair, p, c),
-      };
-    } catch (err) {
-      if (err instanceof SyntaxError) {
-        return { ok: false, error: "Could not parse Grok's forecast." };
-      }
-      return { ok: false, error: "Grok timed out. Try again in a moment." };
-    } finally {
-      clearTimeout(timer);
-    }
+export const runBatchForecast = createServerFn({ method: "POST" })
+  .validator(
+    (input: {
+      providerId?: string;
+      markets: ForecastSnapshot[];
+    }) => input,
+  )
+  .handler(async ({ data }): Promise<{ results: BatchForecastItem[] }> => {
+    const markets = data.markets.slice(0, BATCH_SIZE);
+    const provider = getProvider(data.providerId);
+    const results = await mapPool(markets, 2, async (m) => ({
+      ticker: m.ticker,
+      forecast: await forecastMarketCached(m, provider.id),
+    }));
+    return { results };
   });
