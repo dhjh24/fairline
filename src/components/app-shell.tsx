@@ -24,6 +24,8 @@ export function AppShell({
   const hydrateForecasts = useForecasts((s) => s.hydrate);
   const hydrateCal = useCalibration((s) => s.hydrate);
   const hydrateBot = useBot((s) => s.hydrate);
+  const botOn = useBot((s) => s.on);
+  const botNote = useBot((s) => s.lastNote);
   const lots = useBlotter((s) => s.lots);
   const marks = useBlotter((s) => s.marks);
   const totals = blotterTotals(lots, marks);
@@ -76,6 +78,24 @@ export function AppShell({
                 Live books
               </span>
             ) : null}
+            <Link
+              to="/"
+              hash="paper-bot"
+              title={botNote || (botOn ? "Paper bot is on" : "Paper bot is off")}
+              className={cn(
+                "inline-flex h-8 items-center gap-1.5 rounded-sm px-2.5 text-xs transition-colors duration-150 hover:bg-elevated",
+                botOn ? "text-yes" : "text-muted hover:text-fg",
+              )}
+            >
+              {botOn ? (
+                <>
+                  <span className="live-dot size-1.5 rounded-full bg-yes" />
+                  Bot ON
+                </>
+              ) : (
+                "Bot off"
+              )}
+            </Link>
             <Link
               to="/calibration"
               className="inline-flex h-8 items-center gap-2 rounded-sm px-2.5 text-xs text-muted transition-colors duration-150 hover:bg-elevated hover:text-fg"

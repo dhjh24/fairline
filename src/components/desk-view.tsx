@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { isBitcoinSeries, isEthereumSeries, isFifteenCrypto, isHourlyCrypto } from "@/lib/crypto";
 import { useBlotter } from "@/lib/blotter";
-import { proposeBotFills, useBot } from "@/lib/bot";
+import { botIdleReason, proposeBotFills, useBot } from "@/lib/bot";
 import { useCalibration, type QuoteSnap } from "@/lib/calibration";
 import { useForecasts } from "@/lib/forecasts";
 import type { CryptoFifteen, DeskMarket, DeskResponse } from "@/lib/types";
@@ -59,7 +59,8 @@ export function DeskView({
   const botOn = useBot((s) => s.on);
   const botUniverse = useBot((s) => s.universe);
   const botHydrated = useBot((s) => s.hydrated);
-  const botNote = useBot((s) => s.note);
+  const botWatching = useBot((s) => s.watching);
+  const botFilled = useBot((s) => s.filled);
   const capture = useCalibration((s) => s.capture);
   const grokByTicker = useForecasts((s) => s.byTicker);
 
@@ -101,20 +102,25 @@ export function DeskView({
   useEffect(() => {
     if (!data || !botOn || !botHydrated) return;
     const intents = proposeBotFills(data.markets, lots, botUniverse);
-    if (intents.length === 0) return;
-    let filled = 0;
+    if (intents.length === 0) {
+      botWatching(botIdleReason(data.markets, lots, botUniverse));
+      return;
+    }
+    const filled = [];
     for (const intent of intents) {
       const res = openLot(intent);
-      if (res.ok) filled += 1;
-      else break;
+      if (!res.ok) break;
+      filled.push({
+        ticker: intent.ticker,
+        title: intent.title,
+        side: intent.side,
+        contracts: intent.contracts,
+        fillPrice: intent.fillPrice,
+        at: new Date().toISOString(),
+      });
     }
-    if (filled > 0) {
-      botNote(
-        `Paper-filled ${filled} ${botUniverse === "fifteen" ? "15m" : botUniverse} ticket${filled === 1 ? "" : "s"}.`,
-        filled,
-      );
-    }
-  }, [data, botOn, botHydrated, botUniverse, lots, openLot, botNote]);
+    if (filled.length > 0) botFilled(filled);
+  }, [data, botOn, botHydrated, botUniverse, lots, openLot, botWatching, botFilled]);
 
   const markets = useMemo(() => {
     if (!data) return [];
