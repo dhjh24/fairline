@@ -1,0 +1,15 @@
+---
+description: Fairline statistical fair, gamma, signals, Kelly. Skip 15m fade.
+globs: src/lib/model.ts, src/components/app-shell.tsx
+alwaysApply: false
+---
+
+# Model
+
+Full skill: `docs/skills/model.md`
+
+- `priceMarket` in `src/lib/model.ts`: mid → vig → longshot γ 1.14 → time → tape → book.
+- **Skip** power map and near-expiry convexity on `isFifteenCrypto`. Skip convexity on `isHourlyCrypto`.
+- Signals only if EV after touch (YES ask / NO bid) ≥ 2¢ and liquidity ≥ 0.28.
+- Do not reintroduce 15m fade. Regression: 22:30 window faded ~35¢ → 31¢ and settled YES.
+- Methodology copy in `app-shell.tsx` must match the code.

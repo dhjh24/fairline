@@ -1,0 +1,15 @@
+---
+description: Grok overlays, provider adapter, batch forecast.
+globs: src/lib/llm.ts, src/lib/llm-providers.ts, src/lib/forecasts.ts, src/components/forecast-bar.tsx, src/components/grok-panel.tsx, src/components/provider-picker.tsx
+alwaysApply: false
+---
+
+# LLM
+
+Full skill: `docs/skills/llm.md`
+
+- User-initiated only (one market or Forecast top 8). Do not poll.
+- Providers in `src/lib/llm-providers.ts`: Grok 4.6 / 4.5 / 4.3. Cache ~12 min in `fairline-forecasts-v1`.
+- Blend with statistical fair. Do not replace the book silently.
+- Missing `XAI_API_KEY` → say so. Do not fake a forecast.
+- New vendor: same `{ probability, confidence, thesis, factors, risks }` shape.

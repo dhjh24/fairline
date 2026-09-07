@@ -1,0 +1,16 @@
+---
+description: Kalshi fetch, 15m cards, hourly tapes, 429s, candlesticks.
+globs: src/lib/crypto.ts, src/lib/kalshi.ts, src/lib/desk-fn.ts, src/components/crypto-*.tsx, src/components/price-chart.tsx, src/components/market-detail.tsx
+alwaysApply: false
+---
+
+# Kalshi
+
+Full skill: `docs/skills/kalshi.md`
+
+- Base `https://external-api.kalshi.com/trade-api/v2`
+- Priority fetch: `KXBTC15M`, `KXETH15M` first, then `KXBTCD` / `KXETHD` at concurrency 2.
+- 15m = one binary vs CF print. Hourly = above/below ladder; implied spot is the 50¢ crossing.
+- Candles: `GET /series/{series}/markets/{ticker}/candlesticks`. Intervals **1, 60, 1440 only**. 15m and τ < 2d → interval **1**.
+- 15m countdown: no `Date.now()` on first paint (hydration).
+- Settled prints: `GET /events?status=settled&series_ticker=KXBTC15M|KXETH15M`

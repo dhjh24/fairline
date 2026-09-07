@@ -1,0 +1,25 @@
+---
+description: Fairline product contract. Always apply in this repo.
+alwaysApply: true
+---
+
+# Fairline
+
+Kalshi fair-value desk. Paper only. Read `AGENTS.md` and `docs/skills/` before changing the model, fetch, blotter, bot, or Score page.
+
+Hard rules:
+
+- No live Kalshi orders. Paper fills only.
+- No auth. No database. State is `localStorage` (`fairline-*-v1`).
+- Fair is `src/lib/model.ts`, not last trade.
+- Do **not** fade 15-minute BTC/ETH (`KXBTC15M`, `KXETH15M`) toward 0/1. Skip γ and time convexity.
+- Fetch `KXBTC15M` and `KXETH15M` **first**, then hourly series at concurrency 2.
+- `/blotter` must not wait on `getDesk`. Lots are local.
+- Honest Brier: mid 8¢–92¢ and snap ≥ 90s before close. Do not treat 99¢ rungs as skill.
+- Bot does not sell. Only **Bought YES** (ask) or **Bought NO** (bid). Header: **Bot ON** / **Bot off**.
+- 15m candles: `period_interval=1`. Hourly candles on a 15m book yield an empty chart.
+- Auth stays OFF. Do not wire Better Auth / Neon.
+- Grok overlays are user-initiated only. Need `XAI_API_KEY`.
+
+Skills: `docs/skills/model.md`, `kalshi.md`, `paper-book.md`, `calibration.md`, `llm.md`, `self-host.md`.
+Repo: https://github.com/dhjh24/fairline

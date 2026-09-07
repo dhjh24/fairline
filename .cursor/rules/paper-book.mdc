@@ -1,0 +1,16 @@
+---
+description: Paper blotter, paper bot, P&L, export. No Kalshi orders.
+globs: src/lib/blotter.ts, src/lib/bot.ts, src/lib/export.ts, src/components/bot-bar.tsx, src/components/blotter-view.tsx, src/components/desk-view.tsx, src/routes/blotter.tsx
+alwaysApply: false
+---
+
+# Paper book
+
+Full skill: `docs/skills/paper-book.md`
+
+- Starting cash $1000. Touch: YES at ask, NO at bid. Keys: `fairline-blotter-v1`, `fairline-bot-v1`.
+- `src/routes/blotter.tsx` has **no** `loader: getDesk`. Marks refresh in the background.
+- Bot default universe `fifteen`. HOLD → not buying. No sell — **Bought YES** / **Bought NO**.
+- Half-Kelly, max 10% cash, skip fill ≤ 2¢ or ≥ 98¢, skip < 45s to close.
+- Empty blotter is not a Kalshi bug. Book is per-origin localStorage.
+- Export CSV/JSON from blotter and Score. Include market Brier, skill, lead_sec, informative.

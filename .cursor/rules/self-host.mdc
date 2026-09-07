@@ -1,0 +1,14 @@
+---
+description: Docker self-host, Nitro node-server, env.
+globs: Dockerfile, docker-compose.yml, .env.example, vite.config.ts
+alwaysApply: false
+---
+
+# Self-host
+
+Full skill: `docs/skills/self-host.md`
+
+- `Dockerfile` multi-stage, `NITRO_PRESET=node-server`, `VITE_AUTH_ENABLED=false`.
+- Optional runtime `XAI_API_KEY`. Never bake secrets into the image.
+- `docker compose up -d --build`. Rebuild after model/tape changes.
+- No Postgres. Paper state stays in the browser.

@@ -1,0 +1,15 @@
+---
+description: Honest Brier, settlements, Score page, was the model wrong.
+globs: src/lib/calibration.ts, src/components/calibration-view.tsx, src/components/settlement-loop.tsx, src/routes/calibration.tsx
+alwaysApply: false
+---
+
+# Calibration
+
+Full skill: `docs/skills/calibration.md`
+
+- Snapshot on desk refresh. After close, join Kalshi `result`. Auto-settle matching lots 100/0.
+- Brier `(fair − y)²`. Skill = market Brier − model Brier (positive = model won).
+- Honest (headline): mid ∈ (0.08, 0.92) and snap ≥ 90s before close.
+- Default Score filter is Honest. Do not treat ladder rungs as independent samples.
+- Fastest loop is 15m BTC/ETH.
