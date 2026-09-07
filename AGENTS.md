@@ -5,6 +5,7 @@ Independent fair-value desk for live Kalshi event contracts. Paper blotter, pape
 **Repo:** [dhjh24/fairline](https://github.com/dhjh24/fairline)
 **Product README:** [README.md](README.md)
 **Skills:** [docs/skills/README.md](docs/skills/README.md)
+**Cursor:** [.cursor/rules/](.cursor/rules/) — always-on contract plus glob-attached skills
 
 Read this file before changing the model, Kalshi fetch, blotter, bot, or calibration. Load the matching skill in `docs/skills/` for that task.
 
