@@ -32,6 +32,10 @@ Export CSV or JSON from the blotter and the calibration page (lots, marks, P&L, 
 
 The desk snapshots fair vs mid on each refresh (15-minute crypto, tape rungs, signals, watchlist, open paper lots). After Kalshi settles, Fairline scores Brier, whether the model was on the right side of the market, and whether a YES/NO signal hit. Paper lots on scored tickers settle at 100 or 0. Nothing is stored on a server.
 
+## Agents
+
+Future Grok / coding agents: read **[AGENTS.md](AGENTS.md)** (contract) and **[docs/skills/](docs/skills/README.md)** (model, Kalshi, paper book, calibration, LLM, self-host) before changing the desk.
+
 ## Stack
 
 TanStack Start, React 19, Tailwind v4. Live books come from Kalshi’s public trade API. Grok overlay uses the xAI API when `XAI_API_KEY` is set.
