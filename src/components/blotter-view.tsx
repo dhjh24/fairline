@@ -29,7 +29,7 @@ export function BlotterView() {
   const snaps = useCalibration((s) => s.snaps);
   const verdicts = useCalibration((s) => s.verdicts);
   const bot = useBot();
-  const [filter, setFilter] = useState<Filter>("open");
+  const [filter, setFilter] = useState<Filter>("all");
   const totals = useMemo(() => blotterTotals(lots, marks), [lots, marks]);
 
   const visible = useMemo(() => {
@@ -49,9 +49,9 @@ export function BlotterView() {
         <div>
           <h1 className="text-3xl font-medium tracking-tight md:text-4xl">Paper blotter</h1>
           <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted">
-            Hypothetical fills at the touch. The paper bot takes Fairline signals
-            on its own; open lots mark to Kalshi's mid and to Fairline's fair.
-            Starting cash ${STARTING_CASH.toLocaleString()}.
+            Hypothetical fills at the touch. This book lives in this browser — it is
+            not a Kalshi order history. The paper bot only fills when it is ON and
+            Fairline says Buy YES or Buy NO. Starting cash ${STARTING_CASH.toLocaleString()}.
           </p>
         </div>
       </div>
@@ -147,10 +147,11 @@ export function BlotterView() {
 
       {visibleLots.length === 0 ? (
         <div className="rounded-xl bg-surface px-6 py-16 text-center shadow-[var(--shadow-border)]">
-          <p className="text-sm text-muted">No paper fills yet.</p>
+          <p className="text-sm text-muted">No paper fills in this browser yet.</p>
           <p className="mt-2 text-sm text-subtle">
-            Open a market, size a ticket, and tap Log paper fill — or start the paper
-            bot on the desk.
+            {bot.on
+              ? "Bot is ON. It only buys when Fairline shows Buy YES or Buy NO — HOLD means it sits out. Fills show up here after the next desk refresh."
+              : "This page does not pull Kalshi trades. Log a ticket from a market, or turn the paper bot on from the desk."}
           </p>
           <Button asChild className="mt-4">
             <Link to="/">Back to the desk</Link>

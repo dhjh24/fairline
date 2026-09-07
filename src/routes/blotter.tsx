@@ -7,20 +7,17 @@ import { useBlotter } from "@/lib/blotter";
 import { getDesk, markTickers } from "@/lib/desk-fn";
 
 export const Route = createFileRoute("/blotter")({
-  loader: () => getDesk(),
-  staleTime: 30_000,
   component: BlotterPage,
 });
 
 function BlotterPage() {
-  const initial = Route.useLoaderData();
   const applyMarks = useBlotter((s) => s.applyMarks);
   const lots = useBlotter((s) => s.lots);
 
   const desk = useQuery({
     queryKey: ["desk"],
     queryFn: () => getDesk(),
-    initialData: initial,
+    staleTime: 30_000,
     refetchInterval: 60_000,
   });
 
