@@ -13,7 +13,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBlotter } from "@/lib/blotter";
 import { useForecasts } from "@/lib/forecasts";
-import { compact, formatClose, pct, pp, relativeClose, signedCents } from "@/lib/format";
+import { isFifteenCrypto } from "@/lib/crypto";
+import { compact, formatClose, pct, pp, relativeClose, signedCents, usdTarget } from "@/lib/format";
 import { kalshiMarketUrl } from "@/lib/kalshi";
 import type { GrokForecast, MarketDetail } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -149,7 +150,9 @@ export function MarketDetailView({
 
       <div className="grid gap-4 lg:grid-cols-5">
         <section className="rounded-xl bg-surface p-4 shadow-[var(--shadow-border)] lg:col-span-3 md:p-5">
-          <h2 className="mb-3 text-sm font-medium">Price</h2>
+          <h2 className="mb-3 text-sm font-medium">
+            {isFifteenCrypto(m.seriesTicker) ? "YES tape this window" : "Price"}
+          </h2>
           <PriceChart candles={data.candles} />
         </section>
         <section className="rounded-xl bg-surface p-4 shadow-[var(--shadow-border)] lg:col-span-2 md:p-5">
@@ -177,6 +180,30 @@ export function MarketDetailView({
           }}
         />
       </section>
+
+      {data.printHistory && data.printHistory.length > 0 ? (
+        <section className="rounded-xl bg-surface p-4 shadow-[var(--shadow-border)] md:p-5">
+          <h2 className="text-sm font-medium">Recent 15-minute prints</h2>
+          <p className="mt-1 text-xs text-muted">
+            Settled Kalshi windows for this series. UP means the CF print finished at or above the target.
+          </p>
+          <ol className="mt-3 divide-y divide-border">
+            {data.printHistory.slice(0, 16).map((h) => (
+              <li key={h.ticker} className="flex items-center gap-3 py-2 text-sm">
+                <span className="w-24 shrink-0 text-xs tabular-nums text-subtle">
+                  {relativeClose(h.closeTime)}
+                </span>
+                <span className="min-w-0 flex-1 truncate tabular-nums">
+                  {usdTarget(h.target)}
+                </span>
+                <span className={h.result === "yes" ? "text-yes" : "text-no"}>
+                  {h.result === "yes" ? "UP" : "DOWN"}
+                </span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
 
       {data.siblings.length > 0 ? (
         <section className="rounded-xl bg-surface p-4 shadow-[var(--shadow-border)] md:p-5">

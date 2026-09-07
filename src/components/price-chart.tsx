@@ -11,6 +11,17 @@ import {
 import type { Candle } from "@/lib/types";
 import { pct } from "@/lib/format";
 
+function tickLabel(t: number, spanMs: number): string {
+  const d = new Date(t);
+  if (spanMs < 36 * 3_600_000) {
+    return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  }
+  if (spanMs < 14 * 86_400_000) {
+    return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric" });
+  }
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
 export function PriceChart({ candles }: { candles: Candle[] }) {
   const [ready, setReady] = useState(false);
   useEffect(() => setReady(true), []);
@@ -18,15 +29,16 @@ export function PriceChart({ candles }: { candles: Candle[] }) {
   if (candles.length < 2) {
     return (
       <p className="px-1 py-8 text-center text-sm text-muted">
-        Not enough prints to draw a history.
+        No tape yet this window. 15-minute books only print once trading starts.
       </p>
     );
   }
 
+  const span = candles[candles.length - 1]!.t - candles[0]!.t;
   const data = candles.map((c) => ({
     t: c.t,
     close: c.close,
-    label: new Date(c.t).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+    label: tickLabel(c.t, span),
   }));
 
   if (!ready) {
@@ -66,6 +78,10 @@ export function PriceChart({ candles }: { candles: Candle[] }) {
               borderRadius: 8,
               color: "#ecece8",
               fontSize: 12,
+            }}
+            labelFormatter={(_, pts) => {
+              const t = Number(pts?.[0]?.payload?.t);
+              return Number.isFinite(t) ? new Date(t).toLocaleString() : "";
             }}
             formatter={(value) => [pct(Number(value), 1), "Last"]}
           />

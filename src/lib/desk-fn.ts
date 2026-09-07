@@ -415,14 +415,34 @@ type CandleRaw = {
     high_dollars?: string;
     low_dollars?: string;
     close_dollars?: string;
+    mean_dollars?: string;
     previous_dollars?: string;
   };
+  yes_bid?: { close_dollars?: string; open_dollars?: string };
+  yes_ask?: { close_dollars?: string; open_dollars?: string };
 };
+
+function candlePx(
+  price?: CandleRaw["price"],
+  bid?: CandleRaw["yes_bid"],
+  ask?: CandleRaw["yes_ask"],
+): number {
+  const traded =
+    dollars(price?.close_dollars) ||
+    dollars(price?.mean_dollars) ||
+    dollars(price?.open_dollars) ||
+    dollars(price?.previous_dollars);
+  if (traded > 0) return traded;
+  const b = dollars(bid?.close_dollars ?? bid?.open_dollars);
+  const a = dollars(ask?.close_dollars ?? ask?.open_dollars);
+  if (b > 0 && a > 0) return (b + a) / 2;
+  return b || a;
+}
 
 function parseCandles(raw: CandleRaw[]): Candle[] {
   const out: Candle[] = [];
   for (const c of raw) {
-    const close = dollars(c.price?.close_dollars ?? c.price?.previous_dollars);
+    const close = candlePx(c.price, c.yes_bid, c.yes_ask);
     if (!c.end_period_ts || close <= 0) continue;
     const open = dollars(c.price?.open_dollars) || close;
     const high = dollars(c.price?.high_dollars) || Math.max(open, close);
@@ -436,7 +456,39 @@ function parseCandles(raw: CandleRaw[]): Candle[] {
       volume: dollars(c.volume_fp),
     });
   }
+  out.sort((a, b) => a.t - b.t);
   return out;
+}
+
+async function loadCandles(series: string, ticker: string, tauDays: number): Promise<Candle[]> {
+  const now = Math.floor(Date.now() / 1000);
+  let interval = 1440;
+  let lookback = 180 * 86400;
+  if (isFifteenCrypto(series) || tauDays < 2) {
+    interval = 1;
+    lookback = 8 * 3600;
+  } else if (tauDays < 21) {
+    interval = 60;
+    lookback = 21 * 86400;
+  }
+  const q = `start_ts=${now - lookback}&end_ts=${now}&period_interval=${interval}&include_latest_before_start=true`;
+  try {
+    const res = await kalshiGet<{ candlesticks?: CandleRaw[] }>(
+      `/series/${encodeURIComponent(series)}/markets/${encodeURIComponent(ticker)}/candlesticks?${q}`,
+    );
+    const parsed = parseCandles(res.candlesticks ?? []);
+    if (parsed.length) return parsed;
+  } catch {
+    /* fall through to batch */
+  }
+  try {
+    const res = await kalshiGet<{ markets?: { candlesticks?: CandleRaw[] }[] }>(
+      `/markets/candlesticks?market_tickers=${encodeURIComponent(ticker)}&${q}`,
+    );
+    return parseCandles(res.markets?.[0]?.candlesticks ?? []);
+  } catch {
+    return [];
+  }
 }
 
 export const getMarketDetail = createServerFn({ method: "POST" })
@@ -526,24 +578,12 @@ async function loadMarketDetail(rawTicker: string): Promise<MarketDetail> {
     .sort((a, b) => b.mid - a.mid)
     .slice(0, 8);
 
-  const now = Math.floor(Date.now() / 1000);
-  const lookback = market.tauDays < 14 ? 14 * 86400 : 90 * 86400;
-  const interval = market.tauDays < 14 ? 60 : 1440;
-  let candles: Candle[] = [];
-  try {
-    const q = new URLSearchParams({
-      market_tickers: ticker,
-      start_ts: String(now - lookback),
-      end_ts: String(now),
-      period_interval: String(interval),
-    });
-    const cRes = await kalshiGet<{
-      markets?: { candlesticks?: CandleRaw[] }[];
-    }>(`/markets/candlesticks?${q.toString()}`);
-    candles = parseCandles(cRes.markets?.[0]?.candlesticks ?? []);
-  } catch {
-    candles = [];
-  }
+  const candles = await loadCandles(market.seriesTicker, ticker, market.tauDays);
+  const printHistory = isFifteenCrypto(market.seriesTicker)
+    ? (await loadSettledFifteen().catch(() => [])).filter(
+        (h) => h.seriesTicker === market.seriesTicker,
+      )
+    : [];
 
   const rules = [raw.rules_primary, raw.rules_secondary].filter(Boolean).join("\n\n");
 
@@ -553,6 +593,7 @@ async function loadMarketDetail(rawTicker: string): Promise<MarketDetail> {
     rules,
     book,
     candles,
+    printHistory,
     asOf: new Date().toISOString(),
   };
 }

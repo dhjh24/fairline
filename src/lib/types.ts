@@ -160,5 +160,11 @@ export type MarketDetail = {
   rules: string;
   book: OrderBook;
   candles: Candle[];
+  printHistory?: {
+    ticker: string;
+    target: number;
+    closeTime: string;
+    result: "yes" | "no";
+  }[];
   asOf: string;
 };
