@@ -1,6 +1,6 @@
 # Fairline skills
 
-Load the matching file **before** editing that area. Project contract: [AGENTS.md](../../AGENTS.md) at the repo root (this sandbox also has `AGENTS.project.md`).
+Cursor loads the same contract from [`.cursor/rules/`](../../.cursor/rules/) (`fairline.mdc` always on; the others attach by glob).
 
 | Skill | Load when | File |
 |---|---|---|

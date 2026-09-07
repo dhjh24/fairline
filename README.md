@@ -34,7 +34,7 @@ The desk snapshots fair vs mid on each refresh (15-minute crypto, tape rungs, si
 
 ## Agents
 
-Future Grok / coding agents: read **[AGENTS.md](AGENTS.md)** (contract) and **[docs/skills/](docs/skills/README.md)** (model, Kalshi, paper book, calibration, LLM, self-host) before changing the desk.
+Future Grok / Cursor / coding agents: read **[AGENTS.md](AGENTS.md)**, **[docs/skills/](docs/skills/README.md)**, and **[.cursor/rules/](.cursor/rules/)** before changing the desk.
 
 ## Stack
 
