@@ -1,16 +1,17 @@
 import { Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+
 import {
   STARTING_CASH,
   blotterTotals,
-  lotCost,
+  lotEntryCost,
   lotPnl,
   sideMark,
   useBlotter,
   type BlotterLot,
-  type CloseReason,
+  type TickerMark,
 } from "@/lib/blotter";
 import { scoredRows, useCalibration } from "@/lib/calibration";
 import { useBot } from "@/lib/bot";
@@ -26,11 +27,26 @@ export function BlotterView() {
   const closeLot = useBlotter((s) => s.closeLot);
   const voidLot = useBlotter((s) => s.voidLot);
   const reset = useBlotter((s) => s.reset);
+  const importBook = useBlotter((s) => s.importBook);
   const snaps = useCalibration((s) => s.snaps);
   const verdicts = useCalibration((s) => s.verdicts);
   const bot = useBot();
   const [filter, setFilter] = useState<Filter>("all");
+  const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
   const totals = useMemo(() => blotterTotals(lots, marks), [lots, marks]);
+
+  const exchangeClosed = useMemo(
+    () =>
+      lots.filter((l) => l.status === "closed" && l.closeReason !== "void" && l.settleProvenance === "exchange"),
+    [lots],
+  );
+  const manualClosed = useMemo(
+    () =>
+      lots.filter((l) => l.status === "closed" && l.closeReason !== "void" && l.settleProvenance !== "exchange"),
+    [lots],
+  );
 
   const visible = useMemo(() => {
     const rows = lots.filter((l) => l.closeReason !== "void");
@@ -43,34 +59,69 @@ export function BlotterView() {
 
   const visibleLots = lots.filter((l) => l.closeReason !== "void");
 
+  function onImportFile(file: File | undefined) {
+    setImportMsg(null);
+    setImportError(null);
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result ?? "");
+      const res = importBook(text);
+      if (res.ok) {
+        setImportMsg(`Imported ${res.lots} paper lots. Fills and marks were replaced from the JSON book.`);
+      } else {
+        setImportError(res.error);
+      }
+      if (fileRef.current) fileRef.current.value = "";
+    };
+    reader.onerror = () => {
+      setImportError("Could not read that file.");
+      if (fileRef.current) fileRef.current.value = "";
+    };
+    reader.readAsText(file);
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3">
         <div>
           <h1 className="text-3xl font-medium tracking-tight md:text-4xl">Paper blotter</h1>
           <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted">
-            Hypothetical fills at the touch. This book lives in this browser — it is
-            not a Kalshi order history. The paper bot only fills when it is ON and
-            Fairline says Buy YES or Buy NO. Starting cash ${STARTING_CASH.toLocaleString()}.
+            Hypothetical fills at the touch, net of the estimated Kalshi taker fee. This book
+            lives in this browser — it is not a Kalshi order history. The paper bot only fills
+            when it is ON and Fairline says Buy YES or Buy NO. Starting cash
+            ${STARTING_CASH.toLocaleString()}.
           </p>
         </div>
       </div>
 
       <section className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-        <Stat label="Equity" value={`$${totals.equityMarket.toFixed(2)}`} hint="Mark to market" />
+        <Stat label="Equity" value={`$${totals.equityMarket.toFixed(2)}`} hint="Mark to market, net of fees" />
         <Stat
-          label="Market P&L"
-          value={usd(totals.realized + totals.unrealizedMarket)}
-          tone={totals.realized + totals.unrealizedMarket}
+          label="Realized"
+          value={usd(totals.realized)}
+          tone={totals.realized}
+          hint="Closed fills, net of fees"
         />
         <Stat
-          label="Model P&L"
-          value={usd(totals.realized + totals.unrealizedModel)}
-          tone={totals.realized + totals.unrealizedModel}
+          label="Unrealized (market)"
+          value={usd(totals.unrealizedMarket)}
+          tone={totals.unrealizedMarket}
         />
-        <Stat label="Realized" value={usd(totals.realized)} tone={totals.realized} />
+        <Stat
+          label="Unrealized (model)"
+          value={usd(totals.unrealizedModel)}
+          tone={totals.unrealizedModel}
+        />
         <Stat label="Open lots" value={String(totals.openCount)} hint={`${totals.closedCount} closed`} />
-        <Stat label="Cash" value={`$${totals.cash.toFixed(2)}`} hint={`Tied $${totals.openCost.toFixed(2)}`} />
+        <Stat label="Cash" value={`$${totals.cash.toFixed(2)}`} hint={`Fees paid $${totals.feesPaid.toFixed(2)}`} />
+      </section>
+
+      <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Stat label="Closed by Kalshi" value={String(exchangeClosed.length)} hint="Auto-settled from exchange result" />
+        <Stat label="Closed manually" value={String(manualClosed.length)} hint="Flatten / manual settle / void" />
+        <Stat label="Bot fills" value={String(bot.sessionFills)} hint="This browser session" />
+        <Stat label="Estimated fees" value={`$${totals.feesPaid.toFixed(2)}`} hint="Taker fee per ticket at fill" />
       </section>
 
       <div className="flex flex-wrap gap-2">
@@ -122,6 +173,17 @@ export function BlotterView() {
         >
           Export JSON
         </Button>
+        <Button variant="ghost" size="sm" onClick={() => fileRef.current?.click()}>
+          Import JSON
+        </Button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          aria-label="Import a Fairline JSON book"
+          onChange={(e) => onImportFile(e.target.files?.[0])}
+        />
         {visibleLots.length > 0 ? (
           <Dialog>
             <DialogTrigger asChild>
@@ -144,6 +206,12 @@ export function BlotterView() {
           {visible.length} shown
         </span>
       </div>
+      {importMsg ? (
+        <p className="rounded-md bg-yes-dim px-3 py-2 text-sm text-yes">{importMsg}</p>
+      ) : null}
+      {importError ? (
+        <p className="rounded-md bg-no-dim px-3 py-2 text-sm text-no">{importError}</p>
+      ) : null}
 
       {visibleLots.length === 0 ? (
         <div className="rounded-xl bg-surface px-6 py-16 text-center shadow-[var(--shadow-border)]">
@@ -163,26 +231,55 @@ export function BlotterView() {
         </div>
       ) : (
         <ul className="flex flex-col rounded-xl bg-surface shadow-[var(--shadow-border)]">
-          {visible.map((lot) => (
-            <LotRow
-              key={lot.id}
-              lot={lot}
-              mid={marks[lot.ticker]?.mid ?? lot.midAtEntry}
-              fair={marks[lot.ticker]?.fair ?? lot.fairAtEntry}
-              onFlatten={() => closeLot(lot.id, "flatten", sideMark(lot.side, marks[lot.ticker]?.mid ?? lot.midAtEntry))}
-              onSettle={(reason) => {
-                const yes = reason === "settle-yes" ? 1 : 0;
-                closeLot(lot.id, reason, sideMark(lot.side, yes));
-              }}
-              onVoid={() => voidLot(lot.id)}
-            />
-          ))}
+          {visible.map((lot) => {
+            const mark = marks[lot.ticker];
+            const mid = mark?.mid ?? lot.midAtEntry;
+            const fair = mark?.fair ?? lot.fairAtEntry;
+            const flatPx =
+              lot.side === "yes"
+                ? typeof mark?.bid === "number" && mark.bid > 0
+                  ? mark.bid
+                  : null
+                : typeof mark?.ask === "number" && mark.ask > 0
+                  ? 1 - mark.ask
+                  : null;
+            const canFlatten = lot.status === "open" && flatPx != null;
+            return (
+              <LotRow
+                key={lot.id}
+                lot={lot}
+                mark={mark}
+                mid={mid}
+                fair={fair}
+                onFlatten={
+                  canFlatten
+                    ? () =>
+                        closeLot(lot.id, "flatten", flatPx!, {
+                          settleProvenance: "manual",
+                          exitBasis: lot.side === "yes" ? "bid" : "ask",
+                        })
+                    : undefined
+                }
+                onSettle={(reason) => {
+                  const yes = reason === "settle-yes" ? 1 : 0;
+                  closeLot(lot.id, reason, sideMark(lot.side, yes), {
+                    settleProvenance: "manual",
+                    exitBasis: "manual",
+                  });
+                }}
+                onVoid={() => voidLot(lot.id)}
+              />
+            );
+          })}
         </ul>
       )}
 
       <p className="text-xs text-subtle">
-        Paper book only — not a Kalshi order, not financial advice. Flatten closes at the
-        last mid. Settle YES/NO as if the contract paid $1 or $0.
+        Paper book only — not a Kalshi order, not financial advice. Entry is at the touch (YES
+        ask / NO bid) plus an estimated taker fee. Flatten sells at the executable side of the
+        live quote (YES bid / NO bid): if the quote is missing, flatten is disabled rather than
+        pretending a mid exists. Settle YES/NO as if the contract paid $1 or $0 — manual settles
+        are counted separately from exchange-confirmed ones.
       </p>
     </div>
   );
@@ -218,6 +315,7 @@ function Stat({
 
 function LotRow({
   lot,
+  mark,
   mid,
   fair,
   onFlatten,
@@ -225,20 +323,22 @@ function LotRow({
   onVoid,
 }: {
   lot: BlotterLot;
+  mark?: TickerMark;
   mid: number;
   fair: number;
-  onFlatten: () => void;
-  onSettle: (reason: Extract<CloseReason, "settle-yes" | "settle-no">) => void;
+  onFlatten?: () => void;
+  onSettle: (reason: Extract<BlotterLot["closeReason"], "settle-yes" | "settle-no">) => void;
   onVoid: () => void;
 }) {
   const expired = Date.parse(lot.closeTime) < Date.now();
   const mtm = lot.status === "open" ? lotPnl(lot, mid) : lotPnl(lot, 0);
   const model = lot.status === "open" ? lotPnl(lot, fair) : lotPnl(lot, 0);
   const markPx = lot.status === "open" ? sideMark(lot.side, mid) : lot.exitPrice ?? lot.fillPrice;
+  const feeUsd = lot.feeUsd ?? 0;
 
   return (
     <li className="flex flex-col gap-3 border-b border-border px-4 py-4 last:border-0 md:grid md:grid-cols-12 md:items-center md:gap-3">
-      <div className="md:col-span-4 min-w-0">
+      <div className="min-w-0 md:col-span-4">
         <div className="mb-1 flex flex-wrap items-center gap-2">
           <span
             className={cn(
@@ -260,9 +360,10 @@ function LotRow({
                   : lot.closeReason === "settle-no"
                     ? "Settled NO"
                     : "Closed"}
+              {lot.settleProvenance === "exchange" ? " · Kalshi" : " · manual"}
             </span>
           ) : expired ? (
-            <span className="text-xs text-no">Past close</span>
+            <span className="text-xs text-no">Past close — awaiting Kalshi result</span>
           ) : (
             <span className="text-xs text-subtle">Closes {relativeClose(lot.closeTime)}</span>
           )}
@@ -275,13 +376,17 @@ function LotRow({
           {lot.title}
         </Link>
         <p className="truncate text-xs text-muted">{lot.eventTitle}</p>
+        <p className="mt-1 text-[11px] text-subtle tabular-nums">
+          Fee {lot.feePolicy === "pre-fee-tracking" ? "n/a (legacy)" : `$${feeUsd.toFixed(2)}`} ·{" "}
+          {lot.feePolicy ?? "no policy recorded"}
+        </p>
       </div>
 
       <div className="grid grid-cols-3 gap-2 text-sm md:col-span-4 md:grid-cols-4">
         <Cell label="Qty" value={String(lot.contracts)} />
         <Cell label="Fill" value={pct(lot.fillPrice)} />
         <Cell label={lot.status === "open" ? "Mark" : "Exit"} value={pct(markPx)} />
-        <Cell label="Cost" value={`$${lotCost(lot).toFixed(2)}`} className="hidden md:flex" />
+        <Cell label="Cost+fee" value={`$${lotEntryCost(lot).toFixed(2)}`} className="hidden md:flex" />
       </div>
 
       <div className="flex items-center justify-between gap-3 md:col-span-2 md:block md:text-right">
@@ -302,8 +407,21 @@ function LotRow({
       <div className="flex flex-wrap gap-2 md:col-span-2 md:justify-end">
         {lot.status === "open" ? (
           <>
-            <Button type="button" size="sm" variant="secondary" onClick={onFlatten}>
-              Flatten
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={onFlatten}
+              disabled={!onFlatten}
+              title={
+                onFlatten
+                  ? lot.side === "yes"
+                    ? `Sell YES at the YES bid ${pct(mark?.bid ?? 0)}`
+                    : `Sell NO at the NO bid ${pct(mark?.ask != null ? 1 - mark.ask : 0)}`
+                  : "No live executable quote — wait for a desk refresh, or settle/void manually"
+              }
+            >
+              {onFlatten ? "Flatten" : "No quote"}
             </Button>
             <Dialog>
               <DialogTrigger asChild>
@@ -314,7 +432,8 @@ function LotRow({
               <DialogContent title="Settle this contract">
                 <p className="text-sm text-muted">
                   Paper-settle {lot.contracts} {lot.side.toUpperCase()} as if Kalshi paid $1
-                  or $0. This does not touch the live exchange.
+                  or $0. Marked as a manual settle — exchange-confirmed settlements come from the
+                  Kalshi result poll automatically. This does not touch the live exchange.
                 </p>
                 <div className="mt-4 flex flex-wrap gap-2">
                   <Button type="button" variant="yes" onClick={() => onSettle("settle-yes")}>

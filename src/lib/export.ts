@@ -2,12 +2,14 @@ import {
   STARTING_CASH,
   blotterTotals,
   lotCost,
+  lotEntryCost,
   lotPnl,
   sideMark,
   type BlotterLot,
   type TickerMark,
 } from "@/lib/blotter";
 import type { QuoteSnap, ScoredRow, Verdict } from "@/lib/calibration";
+import { seriesGroupKey } from "@/lib/calibration";
 
 function stamp(): string {
   return new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
@@ -50,6 +52,11 @@ export function blotterCsv(lots: BlotterLot[], marks: Record<string, TickerMark>
     "closed_at",
     "contracts",
     "fill",
+    "fee_policy",
+    "fee_usd",
+    "entry_cost_with_fee",
+    "settle_provenance",
+    "exit_basis",
     "mid_entry",
     "fair_entry",
     "mark_mid",
@@ -84,6 +91,11 @@ export function blotterCsv(lots: BlotterLot[], marks: Record<string, TickerMark>
         lot.closedAt ?? "",
         lot.contracts,
         lot.fillPrice.toFixed(4),
+        lot.feePolicy ?? "",
+        (lot.feeUsd ?? 0).toFixed(4),
+        lotEntryCost(lot).toFixed(4),
+        lot.settleProvenance ?? (lot.status === "closed" ? "manual" : ""),
+        lot.exitBasis ?? "",
         lot.midAtEntry.toFixed(4),
         lot.fairAtEntry.toFixed(4),
         mid.toFixed(4),
@@ -102,6 +114,8 @@ export function scoresCsv(rows: ScoredRow[]): string {
   const headers = [
     "ticker",
     "series",
+    "series_group",
+    "model_version",
     "title",
     "event",
     "category",
@@ -128,6 +142,8 @@ export function scoresCsv(rows: ScoredRow[]): string {
   const body = rows.map((r) => [
     r.ticker,
     r.seriesTicker,
+    seriesGroupKey(r.seriesTicker),
+    r.modelVersion ?? "",
     r.title,
     r.eventTitle,
     r.category,

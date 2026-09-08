@@ -9,10 +9,10 @@ Bitcoin and Ethereum are first-class boards: hourly above/below contracts are fe
 ## Model
 
 1. **Event vig** — on mutually exclusive fields whose prices sum near 100%, the overround is removed.
-2. **Longshot calibration** — a power map (γ 1.14) trims overbet longshots and lifts underbet favorites.
+2. **Longshot calibration** — a power map (γ 1.14) trims overbet longshots and lifts underbet favorites. Skipped on 15-minute and hourly BTC/ETH.
 3. **Liquidity gate** — thin books raise the edge required before a signal fires. They do not shrink the point estimate toward 50%.
-4. **Time convexity** — near-dated contracts push toward 0/1; long-dated illiquid ones fade slightly.
-5. **Tape and book** — last-versus-mid and order-book imbalance, scaled by liquidity.
+4. **Time convexity** — near-dated contracts push toward 0/1; long-dated illiquid ones fade slightly. Skipped on 15-minute and hourly crypto.
+5. **Tape and book** — last-versus-mid and order-book imbalance, scaled by liquidity. 15-minute crypto ignores the prior window’s last print.
 
 A YES or NO signal fires only when expected value after the ask/bid is at least 2¢ and the book is liquid enough. Optional Grok forecasts blend with the statistical fair value when you ask.
 

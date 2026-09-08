@@ -1,6 +1,7 @@
 import { create } from "zustand";
-import { isFifteenCrypto } from "@/lib/crypto";
-import type { Signal } from "@/lib/types";
+import { isFifteenCrypto, isPrintMarket } from "./crypto.ts";
+import { MODEL_VERSION } from "./model.ts";
+import type { CryptoFifteen, DeskMarket, DeskResponse, Signal } from "./types.ts";
 
 const KEY = "fairline-calibration-v1";
 const MAX_SNAPS = 400;
@@ -21,6 +22,11 @@ export type QuoteSnap = {
   signal: Signal;
   grok?: number;
   snappedAt: string;
+  lastMid?: number;
+  lastFair?: number;
+  lastSnappedAt?: string;
+  /** Immutable model version that produced `fair`. */
+  modelVersion?: string;
 };
 
 export type Verdict = {
@@ -118,6 +124,30 @@ export function brier(p: number, y: 0 | 1): number {
   return (x - y) * (x - y);
 }
 
+export function snapLeadSec(closeTime: string, snappedAt: string): number {
+  const close = Date.parse(closeTime);
+  const snapped = Date.parse(snappedAt);
+  if (!Number.isFinite(close) || !Number.isFinite(snapped)) return 0;
+  return (close - snapped) / 1000;
+}
+
+export function isInformativeSnap(mid: number, closeTime: string, snappedAt: string): boolean {
+  return mid > 0.08 && mid < 0.92 && snapLeadSec(closeTime, snappedAt) >= 90;
+}
+
+/** Keep the first honest quote. Later prints (often 99¢ / <90s) are last* only. */
+export function mergeLiveSnap(prev: QuoteSnap | undefined, next: QuoteSnap): QuoteSnap {
+  if (prev && isInformativeSnap(prev.mid, prev.closeTime, prev.snappedAt)) {
+    return {
+      ...prev,
+      lastMid: next.mid,
+      lastFair: next.fair,
+      lastSnappedAt: next.snappedAt,
+    };
+  }
+  return next;
+}
+
 export function scoredRows(
   snaps: Record<string, QuoteSnap>,
   verdicts: Record<string, Verdict>,
@@ -130,13 +160,10 @@ export function scoredRows(
     const signalHit =
       snap.signal === "hold" ? undefined : snap.signal === "yes" ? y === 1 : y === 0;
     const sideHit = snap.fair === snap.mid ? y === (snap.mid >= 0.5 ? 1 : 0) : snap.fair > snap.mid ? y === 1 : y === 0;
-    const close = Date.parse(snap.closeTime);
-    const snapped = Date.parse(snap.snappedAt);
-    const leadSec =
-      Number.isFinite(close) && Number.isFinite(snapped) ? (close - snapped) / 1000 : 0;
+    const leadSec = snapLeadSec(snap.closeTime, snap.snappedAt);
     const marketBrier = brier(snap.mid, y);
     const modelBrier = brier(snap.fair, y);
-    const informative = snap.mid > 0.08 && snap.mid < 0.92 && leadSec >= 90;
+    const informative = isInformativeSnap(snap.mid, snap.closeTime, snap.snappedAt);
     out.push({
       ...snap,
       result: v.result,
@@ -186,10 +213,10 @@ export type CalSummary = {
 export function summarize(rows: ScoredRow[]): CalSummary {
   const n = rows.length;
   const mean = (xs: number[]) => (xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : 0);
-  const signals = rows.filter((r) => r.signalHit !== undefined);
-  const fifteen = rows.filter((r) => isFifteenCrypto(r.seriesTicker));
-  const grok = rows.filter((r) => r.grokBrier != null);
   const honest = rows.filter((r) => r.informative);
+  const signals = honest.filter((r) => r.signalHit !== undefined);
+  const fifteen = honest.filter((r) => isFifteenCrypto(r.seriesTicker));
+  const grok = honest.filter((r) => r.grokBrier != null);
   const edges = [0, 0.2, 0.4, 0.6, 0.8, 1.0001];
   const bins: Bin[] = [];
   for (let i = 0; i < edges.length - 1; i++) {
@@ -213,12 +240,219 @@ export function summarize(rows: ScoredRow[]): CalSummary {
     grokBrier: mean(grok.map((r) => r.grokBrier ?? 0)),
     signalN: signals.length,
     signalHits: signals.filter((r) => r.signalHit).length,
-    sideN: n,
-    sideHits: rows.filter((r) => r.sideHit).length,
+    sideN: honest.length,
+    sideHits: honest.filter((r) => r.sideHit).length,
     fifteenN: fifteen.length,
     fifteenBrier: mean(fifteen.map((r) => r.brier)),
     bins,
   };
+}
+
+export function collectDeskSnaps(
+  data: DeskResponse,
+  watch: string[],
+  openTickers: string[],
+  grokByTicker: Record<string, { probability?: number } | undefined>,
+): QuoteSnap[] {
+  const want = new Set<string>([
+    ...watch,
+    ...openTickers,
+    ...(data.btc?.rungs.map((r) => r.ticker) ?? []),
+    ...(data.eth?.rungs.map((r) => r.ticker) ?? []),
+    ...(data.gold?.rungs.map((r) => r.ticker) ?? []),
+  ]);
+  const rows: QuoteSnap[] = [];
+  const seen = new Set<string>();
+  const push = (row: QuoteSnap) => {
+    if (seen.has(row.ticker)) return;
+    seen.add(row.ticker);
+    rows.push(row);
+  };
+  if (data.btc15) push(snapFifteen(data.btc15, grokByTicker[data.btc15.ticker]?.probability));
+  if (data.eth15) push(snapFifteen(data.eth15, grokByTicker[data.eth15.ticker]?.probability));
+  if (data.gold15) push(snapFifteen(data.gold15, grokByTicker[data.gold15.ticker]?.probability));
+  for (const m of data.markets) {
+    if (m.signal === "hold" && !want.has(m.ticker) && !isPrintMarket(m.seriesTicker)) {
+      continue;
+    }
+    push(snapMarket(m, grokByTicker[m.ticker]?.probability));
+  }
+  return rows;
+}
+
+function snapMarket(m: DeskMarket, grok?: number): QuoteSnap {
+  return {
+    ticker: m.ticker,
+    eventTicker: m.eventTicker,
+    seriesTicker: m.seriesTicker,
+    title: m.yesSubTitle || m.title,
+    eventTitle: m.eventTitle,
+    category: m.category,
+    closeTime: m.closeTime,
+    target: m.strike,
+    mid: m.mid,
+    fair: m.fair,
+    bid: m.bid,
+    ask: m.ask,
+    signal: m.signal,
+    grok,
+    snappedAt: new Date().toISOString(),
+    modelVersion: MODEL_VERSION,
+  };
+}
+
+function snapFifteen(p: CryptoFifteen, grok?: number): QuoteSnap {
+  const seriesTicker =
+    p.asset === "eth" ? "KXETH15M" : p.asset === "gold" ? "KXGOLD15M" : "KXBTC15M";
+  return {
+    ticker: p.ticker,
+    eventTicker: p.ticker,
+    seriesTicker,
+    title: p.title,
+    eventTitle: p.eventTitle,
+    category: "Commodities",
+    closeTime: p.closeTime,
+    target: p.target,
+    mid: p.mid,
+    fair: p.fair,
+    bid: p.bid,
+    ask: p.ask,
+    signal: p.signal,
+    grok,
+    snappedAt: new Date().toISOString(),
+    modelVersion: MODEL_VERSION,
+  };
+}
+
+function persistBase(s: { hydrated: boolean; snaps: Record<string, QuoteSnap>; verdicts: Record<string, Verdict> }) {
+  if (s.hydrated) return s;
+  const disk = read();
+  return {
+    snaps: disk.snaps,
+    verdicts: disk.verdicts,
+  };
+}
+
+export type SeriesGroup = {
+  key: string;
+  label: string;
+  /** Distinguish one mutually-exclusive event (one ladder) from independent markets. */
+  isLadder: boolean;
+};
+
+export function seriesGroupKey(seriesTicker: string): string {
+  const s = seriesTicker.toUpperCase();
+  if (s === "KXBTC15M") return "btc-15m";
+  if (s === "KXETH15M") return "eth-15m";
+  if (s === "KXBTCD" || s === "KXBTC") return "btc-hourly";
+  if (s === "KXETHD" || s === "KXETH") return "eth-hourly";
+  if (s === "KXGOLD15M") return "gold-15m";
+  if (s === "KXGOLDH") return "gold-hourly";
+  if (s.startsWith("KXBTC")) return "btc-other";
+  if (s.startsWith("KXETH")) return "eth-other";
+  if (s.startsWith("KXGOLD")) return "gold-other";
+  return "other";
+}
+
+export function seriesGroup(seriesTicker: string): SeriesGroup {
+  const key = seriesGroupKey(seriesTicker);
+  switch (key) {
+    case "btc-15m":
+      return { key, label: "BTC 15m", isLadder: false };
+    case "eth-15m":
+      return { key, label: "ETH 15m", isLadder: false };
+    case "gold-15m":
+      return { key, label: "Gold 15m", isLadder: false };
+    case "btc-hourly":
+      return { key, label: "BTC hourly ladder", isLadder: true };
+    case "eth-hourly":
+      return { key, label: "ETH hourly ladder", isLadder: true };
+    case "gold-hourly":
+      return { key, label: "Gold hourly ladder", isLadder: true };
+    case "btc-other":
+      return { key, label: "BTC other", isLadder: false };
+    case "eth-other":
+      return { key, label: "ETH other", isLadder: false };
+    case "gold-other":
+      return { key, label: "Gold other", isLadder: false };
+    default:
+      return { key, label: "Other", isLadder: false };
+  }
+}
+
+export type SeriesBreakdown = {
+  key: string;
+  label: string;
+  isLadder: boolean;
+  n: number;
+  honestN: number;
+  events: number;
+  honestEvents: number;
+  honestBrier: number;
+  honestMarketBrier: number;
+  honestSkill: number;
+};
+
+/** Honest per-series-group breakdown. Ladder rungs share one event. */
+export function summarizeBySeries(rows: ScoredRow[]): SeriesBreakdown[] {
+  const groups = new Map<string, ScoredRow[]>();
+  for (const r of rows) {
+    const key = seriesGroupKey(r.seriesTicker);
+    const list = groups.get(key) ?? [];
+    list.push(r);
+    groups.set(key, list);
+  }
+  const mean = (xs: number[]) => (xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : 0);
+  const out: SeriesBreakdown[] = [];
+  for (const [key, list] of groups) {
+    const g = seriesGroup(key);
+    const honest = list.filter((r) => r.informative);
+    out.push({
+      ...g,
+      n: list.length,
+      honestN: honest.length,
+      events: new Set(list.map((r) => r.eventTicker)).size,
+      honestEvents: new Set(honest.map((r) => r.eventTicker)).size,
+      honestBrier: mean(honest.map((r) => r.brier)),
+      honestMarketBrier: mean(honest.map((r) => r.marketBrier)),
+      honestSkill: mean(honest.map((r) => r.skill)),
+    });
+  }
+  return out.sort((a, b) => b.honestN - a.honestN);
+}
+
+export type HorizonBreakdown = {
+  label: string;
+  n: number;
+  brier: number;
+  marketBrier: number;
+  skill: number;
+};
+
+/** Bucket honest rows by how long before close the snapshot was taken. */
+export function summarizeByHorizon(rows: ScoredRow[]): HorizonBreakdown[] {
+  const mean = (xs: number[]) => (xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : 0);
+  const buckets: { label: string; lo: number; hi: number }[] = [
+    { label: "90s–10m", lo: 90, hi: 600 },
+    { label: "10m–1h", lo: 600, hi: 3600 },
+    { label: "1h–6h", lo: 3600, hi: 21600 },
+    { label: "6h+", lo: 21600, hi: Infinity },
+  ];
+  const out: HorizonBreakdown[] = [];
+  for (const b of buckets) {
+    const rowsIn = rows.filter(
+      (r) => r.informative && r.leadSec >= b.lo && r.leadSec < b.hi,
+    );
+    if (rowsIn.length === 0) continue;
+    out.push({
+      label: b.label,
+      n: rowsIn.length,
+      brier: mean(rowsIn.map((r) => r.brier)),
+      marketBrier: mean(rowsIn.map((r) => r.marketBrier)),
+      skill: mean(rowsIn.map((r) => r.skill)),
+    });
+  }
+  return out;
 }
 
 export function pendingTickers(
@@ -247,15 +481,16 @@ export const useCalibration = create<CalState>((set, get) => ({
   capture: (rows) => {
     if (rows.length === 0) return;
     set((s) => {
-      const snaps = { ...s.snaps };
+      const base = persistBase(s);
+      const snaps = { ...base.snaps };
       const now = Date.now();
       for (const row of rows) {
-        if (s.verdicts[row.ticker]) continue;
+        if (base.verdicts[row.ticker]) continue;
         const close = Date.parse(row.closeTime);
         if (Number.isFinite(close) && now >= close) continue;
-        snaps[row.ticker] = row;
+        snaps[row.ticker] = mergeLiveSnap(snaps[row.ticker], row);
       }
-      const next = prune(snaps, s.verdicts);
+      const next = prune(snaps, base.verdicts);
       write(next);
       return { ...next, hydrated: true };
     });
@@ -263,7 +498,8 @@ export const useCalibration = create<CalState>((set, get) => ({
   applyVerdicts: (rows) => {
     if (rows.length === 0) return;
     set((s) => {
-      const verdicts = { ...s.verdicts };
+      const base = persistBase(s);
+      const verdicts = { ...base.verdicts };
       let changed = false;
       for (const row of rows) {
         if (verdicts[row.ticker]) continue;
@@ -276,7 +512,7 @@ export const useCalibration = create<CalState>((set, get) => ({
         changed = true;
       }
       if (!changed) return s;
-      const next = prune(s.snaps, verdicts);
+      const next = prune(base.snaps, verdicts);
       write(next);
       return { ...next, hydrated: true };
     });

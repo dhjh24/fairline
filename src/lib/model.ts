@@ -1,6 +1,14 @@
-import type { DeskMarket, Factor, OrderBook, Signal } from "@/lib/types";
-import { isFifteenCrypto, isHourlyCrypto } from "@/lib/crypto";
-import { clamp01, dollars, marketMid, tauDays } from "@/lib/kalshi";
+import type { DeskMarket, Factor, OrderBook, Signal } from "./types.ts";
+import { isPrintMarket, isHourlyLadder } from "./crypto.ts";
+import { clamp01, dollars, marketMid, tauDays } from "./kalshi.ts";
+import { feePerContractEstimate } from "./fees.ts";
+
+/**
+ * Bump whenever the statistical pipeline or signal gates change. Stored on
+ * calibration snaps and bot decisions so scored outcomes stay attributable to
+ * the exact model version that produced them.
+ */
+export const MODEL_VERSION = "model-v1-net-edge-2026-09";
 
 const GAMMA = 1.14;
 const MIN_EDGE = 0.02;
@@ -13,9 +21,16 @@ export function powerCalibrate(p: number, gamma = GAMMA): number {
   return a / (a + b);
 }
 
-export function liquidityScore(vol24: number, oi: number, spread: number): number {
-  const v = Math.log1p(Math.max(0, vol24)) / Math.log1p(500_000);
-  const o = Math.log1p(Math.max(0, oi)) / Math.log1p(2_000_000);
+export function liquidityScore(
+  vol24: number,
+  oi: number,
+  spread: number,
+  opts?: { fifteen?: boolean },
+): number {
+  const volCap = opts?.fifteen ? 40_000 : 500_000;
+  const oiCap = opts?.fifteen ? 80_000 : 2_000_000;
+  const v = Math.log1p(Math.max(0, vol24)) / Math.log1p(volCap);
+  const o = Math.log1p(Math.max(0, oi)) / Math.log1p(oiCap);
   const tightness = 1 / (1 + Math.max(0.004, spread) * 25);
   return clamp01(0.45 * Math.min(1, v) + 0.25 * Math.min(1, o) + 0.3 * tightness, 0, 1);
 }
@@ -24,6 +39,14 @@ export function kelly(p: number, price: number): number {
   if (price <= 0.004 || price >= 0.996) return 0;
   const f = (p - price) / (1 - price);
   return Math.max(0, Math.min(0.25, f));
+}
+
+function tapeDetail(last: number, mid: number, mom: number, fifteen: boolean): string {
+  const onMid = fifteen ? Math.abs(last - mid) < 0.002 : Math.abs(mom) < 0.002;
+  const prior = fifteen ? " Prior-window last is ignored." : "";
+  if (onMid) return `Last trade sits on the mid.${prior}`;
+  if (last > mid) return `Last is above mid — buy pressure.${prior}`;
+  return `Last is below mid — sell pressure.${prior}`;
 }
 
 function vigAdjusted(
@@ -66,7 +89,10 @@ export function priceMarket(input: ModelInput): DeskMarket {
     input.ask >= input.bid && input.ask > 0
       ? Math.max(0.004, input.ask - input.bid)
       : 0.04;
-  const L = liquidityScore(input.volume24h, input.openInterest, spread);
+  const print = isPrintMarket(input.seriesTicker);
+  const ladder = isHourlyLadder(input.seriesTicker);
+  const shortMarket = print || ladder;
+  const L = liquidityScore(input.volume24h, input.openInterest, spread, { fifteen: print });
   const tau = tauDays(input.closeTime);
 
   const factors: Factor[] = [];
@@ -91,10 +117,7 @@ export function priceMarket(input: ModelInput): DeskMarket {
   }
   p = afterVig;
 
-  const cryptoShort = isFifteenCrypto(input.seriesTicker) || isHourlyCrypto(input.seriesTicker);
-  const fifteen = isFifteenCrypto(input.seriesTicker);
-
-  if (!fifteen) {
+  if (!shortMarket) {
     const afterCal = powerCalibrate(p);
     factors.push({
       id: "cal",
@@ -108,19 +131,21 @@ export function priceMarket(input: ModelInput): DeskMarket {
       id: "cal",
       label: "Longshot calibration",
       delta: 0,
-      detail: "Skipped on 15-minute crypto. The CF print is already the strike.",
+      detail: print
+        ? "Skipped on 15-minute BTC/ETH/gold prints. The CF print is already the strike."
+        : "Skipped on hourly BTC/ETH/gold rungs. Distance from spot is not a sportsbook longshot.",
     });
   }
 
   let afterTime = p;
-  if (cryptoShort) {
+  if (shortMarket) {
     factors.push({
       id: "time",
       label: "Near-expiry convexity",
       delta: 0,
-      detail: fifteen
-        ? "Skipped on 15-minute prints. Fading a live coin toward 0/1 is the wrong prior."
-        : "Skipped on hourly crypto rungs. The ladder already encodes time.",
+      detail: print
+        ? "Skipped on 15-minute prints. Fading a live price toward 0/1 is the wrong prior."
+        : "Skipped on hourly ladder rungs. The ladder already encodes time.",
     });
   } else if (tau < 10) {
     const ext = 0.1 * (1 - tau / 10) * L;
@@ -144,19 +169,14 @@ export function priceMarket(input: ModelInput): DeskMarket {
   p = afterTime;
 
   let mom = 0;
-  if (input.prevLast > 0) mom += 0.25 * (input.last - input.prevLast);
+  if (!print && input.prevLast > 0) mom += 0.25 * (input.last - input.prevLast);
   mom += 0.12 * (input.last - mid);
   const afterMom = p + mom * L;
   factors.push({
     id: "mom",
     label: "Tape momentum",
     delta: afterMom - p,
-    detail:
-      Math.abs(mom) < 0.002
-        ? "Last trade sits on the mid."
-        : input.last > mid
-          ? "Last is above mid — buy pressure."
-          : "Last is below mid — sell pressure.",
+    detail: tapeDetail(input.last, mid, mom, print),
   });
   p = afterMom;
 
@@ -204,8 +224,22 @@ export function priceMarket(input: ModelInput): DeskMarket {
   }
 
   const edge = signal === "yes" ? evYes : signal === "no" ? evNo : Math.max(evYes, evNo, 0);
+  // Cost-aware edges: subtract the estimated Kalshi taker fee per contract.
+  const evYesNet = Math.max(0, evYes - feePerContractEstimate(ask));
+  const evNoNet = Math.max(0, evNo - feePerContractEstimate(1 - bid));
+  const execEdge =
+    signal === "yes"
+      ? evYesNet
+      : signal === "no"
+        ? evNoNet
+        : Math.max(evYesNet, evNoNet) > 0.005
+          ? Math.max(evYesNet, evNoNet)
+          : 0;
+
   const absGap = Math.abs(fair - mid);
-  const confidence = clamp01(
+  // Quote/liquidity quality — NOT a probability-confidence score. Derived from
+  // how tight the spread is and how much 24h volume/open interest backs it.
+  const quoteQuality = clamp01(
     0.2 + 0.55 * L + 0.25 * (1 / (1 + spread * 18)),
     0,
     1,
@@ -237,8 +271,11 @@ export function priceMarket(input: ModelInput): DeskMarket {
     edge,
     evYes,
     evNo,
+    evYesNet,
+    evNoNet,
+    execEdge,
     signal,
-    confidence,
+    quoteQuality,
     liquidity: L,
     kellyYes: kelly(fair, ask),
     kellyNo: kelly(1 - fair, 1 - bid),

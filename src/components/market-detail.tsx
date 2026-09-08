@@ -13,9 +13,10 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBlotter } from "@/lib/blotter";
 import { useForecasts } from "@/lib/forecasts";
-import { isFifteenCrypto } from "@/lib/crypto";
+import { isPrintMarket } from "@/lib/crypto";
 import { compact, formatClose, pct, pp, relativeClose, signedCents, usdTarget } from "@/lib/format";
 import { kalshiMarketUrl } from "@/lib/kalshi";
+import { MODEL_VERSION } from "@/lib/model";
 import type { GrokForecast, MarketDetail } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -133,8 +134,12 @@ export function MarketDetailView({
         />
         <HeroStat
           label="EV at touch"
-          value={m.signal === "no" ? signedCents(m.evNo) : signedCents(m.evYes)}
-          hint={m.signal === "no" ? "Buying NO at the bid" : "Buying YES at the ask"}
+          value={m.signal === "no" ? signedCents(m.evNoNet) : signedCents(m.evYesNet)}
+          hint={
+            m.signal === "no"
+              ? `Buying NO at ${pct(1 - m.bid)} − est. fee`
+              : `Buying YES at ${pct(m.ask)} − est. fee`
+          }
         />
       </section>
 
@@ -151,7 +156,7 @@ export function MarketDetailView({
       <div className="grid gap-4 lg:grid-cols-5">
         <section className="rounded-xl bg-surface p-4 shadow-[var(--shadow-border)] lg:col-span-3 md:p-5">
           <h2 className="mb-3 text-sm font-medium">
-            {isFifteenCrypto(m.seriesTicker) ? "YES tape this window" : "Price"}
+            {isPrintMarket(m.seriesTicker) ? "YES tape this window" : "Price"}
           </h2>
           <PriceChart candles={data.candles} />
         </section>
@@ -168,7 +173,7 @@ export function MarketDetailView({
         </section>
         <section className="rounded-xl bg-surface p-4 shadow-[var(--shadow-border)] md:p-5">
           <h2 className="mb-3 text-sm font-medium">Position</h2>
-          <PositionSizer market={m} fair={fair} />
+          <PositionSizer market={m} fair={fair} book={data.book} />
         </section>
       </div>
 
@@ -230,9 +235,14 @@ export function MarketDetailView({
       <section className="grid gap-3 sm:grid-cols-4">
         <Mini label="24h volume" value={compact(m.volume24h)} />
         <Mini label="Open interest" value={compact(m.openInterest)} />
-        <Mini label="Confidence" value={pct(m.confidence, 0)} />
+        <Mini label="Quote quality" value={pct(m.quoteQuality, 0)} hint="spread + depth" />
         <Mini label="Closes" value={formatClose(m.closeTime)} />
       </section>
+
+      <p className="text-[11px] text-subtle">
+        Model {MODEL_VERSION} · statistical fair is a market-derived estimate — quote quality is
+        how firm the book is, not how likely the model is right.
+      </p>
 
       {data.rules ? (
         <section className="rounded-xl bg-surface p-4 shadow-[var(--shadow-border)] md:p-5">
@@ -277,11 +287,12 @@ function HeroStat({
   );
 }
 
-function Mini({ label, value }: { label: string; value: string }) {
+function Mini({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="rounded-lg bg-surface px-3 py-3 shadow-[var(--shadow-border)]">
       <p className="text-xs text-muted">{label}</p>
       <p className="mt-1 text-sm tabular-nums">{value}</p>
+      {hint ? <p className="mt-0.5 text-[11px] text-subtle">{hint}</p> : null}
     </div>
   );
 }

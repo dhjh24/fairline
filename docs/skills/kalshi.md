@@ -17,11 +17,13 @@
 
 ## 15m vs hourly
 
-| | 15m `KXBTC15M` / `KXETH15M` | Hourly `KXBTCD` / `KXETHD` |
+| | 15m print | Hourly ladder |
 |---|---|---|
-| Shape | One binary vs CF print | Above/below ladder |
-| UI | `CryptoFifteenCard` + countdown | `CryptoTapeCard` implied spot |
-| Candles | `period_interval=1` | 1 if τ < 2d, else 60 |
+| BTC | `KXBTC15M` | `KXBTCD` |
+| ETH | `KXETH15M` | `KXETHD` |
+| Gold (XAUUSD) | `KXGOLD15M` | `KXGOLDH` |
+
+15m = one binary vs the CF print per window. Hourly = above/below ladder; implied spot is the 50¢ crossing. Gold fetches after BTC/ETH 15m, before the hourly rest, all at concurrency 2.
 
 Candles: `GET /series/{series}/markets/{ticker}/candlesticks`. Valid intervals **1, 60, 1440**. Hourly candles on a 15m book produce an empty chart (“Not enough prints”).
 

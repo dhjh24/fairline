@@ -8,8 +8,9 @@ alwaysApply: false
 
 Full skill: `docs/skills/calibration.md`
 
-- Snapshot on desk refresh. After close, join Kalshi `result`. Auto-settle matching lots 100/0.
+- Snapshot on desk **or Score** (background getDesk, no Score loader). After close, join Kalshi `result`. Auto-settle matching lots 100/0.
 - Brier `(fair − y)²`. Skill = market Brier − model Brier (positive = model won).
-- Honest (headline): mid ∈ (0.08, 0.92) and snap ≥ 90s before close.
+- Honest (headline): mid ∈ (0.08, 0.92) and snap ≥ 90s before close. Never fall back to slam-dunk Brier.
+- Keep the first honest snap; last-second 99¢ overwrites go to `last*` only.
 - Default Score filter is Honest. Do not treat ladder rungs as independent samples.
 - Fastest loop is 15m BTC/ETH.

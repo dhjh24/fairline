@@ -1,8 +1,9 @@
 import { Link } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { SignalBadge } from "@/components/signal-badge";
 import { StarButton } from "@/components/star-button";
 import { ProbBar } from "@/components/prob-bar";
+import { marketPlainReason } from "@/lib/decisions";
 import { compact, pct, relativeClose, signedCents } from "@/lib/format";
 import { useBlotter } from "@/lib/blotter";
 import { useForecasts } from "@/lib/forecasts";
@@ -10,13 +11,31 @@ import type { DeskMarket } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 function EdgeCell({ market }: { market: DeskMarket }) {
-  const gap = market.fair - market.mid;
-  const pos = gap >= 0;
+  // Cost-aware executable edge (same value used for the Edge sort).
+  const edge = market.execEdge;
+  if (market.signal === "hold") {
+    return <span className="text-subtle">—</span>;
+  }
   return (
-    <span className={cn("tabular-nums", pos ? "text-yes" : "text-no")}>
-      {signedCents(market.signal === "hold" ? gap : market.edge * Math.sign(gap || 1))}
+    <span className={cn("tabular-nums", edge >= 0 ? "text-yes" : "text-no")}>
+      {signedCents(edge)}
     </span>
   );
+}
+
+function QuoteAge({ quoteAt }: { quoteAt?: string }) {
+  // Hydration-safe like FeedStatus: renders a placeholder until mounted.
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    setNow(Date.now());
+    const id = window.setInterval(() => setNow(Date.now()), 15_000);
+    return () => window.clearInterval(id);
+  }, []);
+  if (!quoteAt || now == null) return <span>quote —</span>;
+  const t = Date.parse(quoteAt);
+  if (!Number.isFinite(t)) return <span>quote —</span>;
+  const age = Math.max(0, Math.round((now - t) / 1000));
+  return <span title="Quote age: seconds since the desk snapshot that produced this quote">quote {age}s</span>;
 }
 
 export function DeskList({ markets }: { markets: DeskMarket[] }) {
@@ -44,9 +63,9 @@ export function DeskList({ markets }: { markets: DeskMarket[] }) {
         <span className="col-span-5 lg:col-span-5">Market</span>
         <span className="col-span-2">Close</span>
         <span className="col-span-2">Market / Fair</span>
-        <span className="col-span-1 text-right">Edge</span>
+        <span className="col-span-1 text-right">Net edge</span>
         <span className="col-span-1 hidden text-right lg:block">24h</span>
-        <span className="col-span-1 hidden text-right lg:block">Conf</span>
+        <span className="col-span-1 hidden text-right lg:block">Quote</span>
       </div>
       <ul>
         {markets.map((m) => (
@@ -73,6 +92,18 @@ export function DeskList({ markets }: { markets: DeskMarket[] }) {
                     {m.yesSubTitle || m.title}
                   </p>
                   <p className="truncate text-xs text-muted">{m.eventTitle}</p>
+                  <p className="mt-0.5 line-clamp-2 text-xs text-subtle">
+                    {marketPlainReason(m)}
+                  </p>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-subtle tabular-nums">
+                    <span>
+                      Buy YES {pct(m.ask, 0)} / NO {pct(1 - m.bid, 0)}
+                    </span>
+                    <QuoteAge quoteAt={m.quoteAt} />
+                    <span title="Book-liquidity proxy: 24h volume and open interest">
+                      depth {compact(m.volume24h)} vol / {compact(m.openInterest)} OI
+                    </span>
+                  </div>
                   {forecasts[m.ticker] ? (
                     <ForecastLine market={m} forecast={forecasts[m.ticker]!} />
                   ) : null}
@@ -94,14 +125,14 @@ export function DeskList({ markets }: { markets: DeskMarket[] }) {
               </div>
 
               <div className="flex items-center justify-between pl-10 text-sm md:col-span-1 md:block md:pl-0 md:text-right">
-                <span className="text-xs text-muted md:hidden">Edge</span>
+                <span className="text-xs text-muted md:hidden">Net edge</span>
                 <EdgeCell market={m} />
               </div>
               <div className="hidden text-right text-sm tabular-nums text-muted lg:col-span-1 lg:block">
                 {compact(m.volume24h)}
               </div>
               <div className="hidden text-right text-sm tabular-nums text-muted lg:col-span-1 lg:block">
-                {pct(m.confidence, 0)}
+                {pct(m.quoteQuality, 0)}
               </div>
             </Link>
           </li>

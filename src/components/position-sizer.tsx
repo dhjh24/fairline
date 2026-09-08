@@ -5,14 +5,39 @@ import { Button } from "@/components/ui/button";
 import {
   cashOnHand,
   lotPnl,
-  sideMark,
   useBlotter,
 } from "@/lib/blotter";
-import type { DeskMarket } from "@/lib/types";
+import { takerFeeUsd, FEE_POLICY_ID } from "@/lib/fees";
+import type { DeskMarket, OrderBook } from "@/lib/types";
 import { pct, usd } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-export function PositionSizer({ market, fair }: { market: DeskMarket; fair: number }) {
+/** Available contract depth at the executable touch from a real order book. */
+function touchDepth(
+  book: OrderBook | undefined,
+  market: DeskMarket,
+  side: "yes" | "no",
+): { known: boolean; size: number } {
+  if (!book) return { known: false, size: 0 };
+  const levels = side === "yes" ? book.asks : book.bids;
+  const target = side === "yes" ? market.ask : market.bid;
+  if (!levels || levels.length === 0) return { known: false, size: 0 };
+  // parseBook levels are grouped at one-cent prices; find the exact touch or
+  // the first level that would be crossed.
+  const hit = levels.find((l) => Math.abs(l.price - target) < 0.005);
+  if (!hit) return { known: false, size: 0 };
+  return { known: true, size: hit.cumulative };
+}
+
+export function PositionSizer({
+  market,
+  fair,
+  book,
+}: {
+  market: DeskMarket;
+  fair: number;
+  book?: OrderBook;
+}) {
   const [side, setSide] = useState<"yes" | "no">(market.signal === "no" ? "no" : "yes");
   const [n, setN] = useState(10);
   const [note, setNote] = useState<string | null>(null);
@@ -25,10 +50,17 @@ export function PositionSizer({ market, fair }: { market: DeskMarket; fair: numb
 
   const price = side === "yes" ? market.ask : 1 - market.bid;
   const p = side === "yes" ? fair : 1 - fair;
-  const cost = n * price;
-  const ev = n * (p - price);
+  const fee = takerFeeUsd(n, price);
+  const cost = n * price + fee;
+  const grossEv = n * (p - price);
+  const netEv = grossEv - fee;
   const payout = n;
   const kellyN = Math.floor((side === "yes" ? market.kellyYes : market.kellyNo) * 100);
+  const depth = touchDepth(book, market, side);
+  const effectiveN =
+    depth.known && depth.size > 0 ? Math.min(n, Math.floor(depth.size)) : n;
+  const cappedByDepth = depth.known && depth.size > 0 && n > depth.size;
+  const noLiveDepth = !depth.known;
 
   const openHere = lots.filter((l) => l.ticker === market.ticker && l.status === "open");
   const herePnl = openHere.reduce((s, lot) => {
@@ -39,15 +71,23 @@ export function PositionSizer({ market, fair }: { market: DeskMarket; fair: numb
   const summary = useMemo(
     () => ({
       cost,
-      ev,
+      netEv,
       payout,
-      roi: cost > 0 ? ev / cost : 0,
+      roi: cost > 0 ? netEv / cost : 0,
     }),
-    [cost, ev, payout],
+    [cost, netEv, payout],
   );
 
   function logFill() {
     setError(null);
+    if (noLiveDepth) {
+      // No book on this quote: do not pretend we know depth; label slippage.
+      setNote(
+        `No live order book for this market — fill at the quoted touch is estimated; real slippage is unknown.`,
+      );
+      // Proceed anyway: paper desk fills at the touch, clearly labeled above.
+    }
+    const contracts = cappedByDepth ? Math.max(1, Math.floor(depth.size)) : n;
     const res = openLot({
       ticker: market.ticker,
       eventTicker: market.eventTicker,
@@ -57,7 +97,7 @@ export function PositionSizer({ market, fair }: { market: DeskMarket; fair: numb
       category: market.category,
       closeTime: market.closeTime,
       side,
-      contracts: n,
+      contracts,
       fillPrice: price,
       fairAtEntry: fair,
       midAtEntry: market.mid,
@@ -67,7 +107,10 @@ export function PositionSizer({ market, fair }: { market: DeskMarket; fair: numb
       setNote(null);
       return;
     }
-    setNote(`Logged ${n} ${side.toUpperCase()} @ ${pct(price)} · model EV ${usd(ev)}`);
+    const feeLabel = res.lot.feeUsd != null ? `incl. ~$${res.lot.feeUsd.toFixed(2)} fee` : "";
+    setNote(
+      `Logged ${contracts} ${side.toUpperCase()} @ ${pct(price)} ${feeLabel} · model EV after fee ${usd(netEv * (contracts / Math.max(1, n)))}`,
+    );
   }
 
   return (
@@ -119,23 +162,38 @@ export function PositionSizer({ market, fair }: { market: DeskMarket; fair: numb
           className="mt-1"
         />
       </label>
+      {noLiveDepth ? (
+        <p className="rounded-md bg-no-dim px-2.5 py-1.5 text-xs text-no">
+          No live order-book depth for this ticker — paper fill assumes the quoted touch; actual
+          slippage is unknown (estimated).
+        </p>
+      ) : depth.size > 0 ? (
+        <p className="rounded-md bg-elevated px-2.5 py-1.5 text-xs text-muted">
+          Book depth at the touch: {Math.floor(depth.size)} contracts
+          {cappedByDepth ? ` — capped from ${n} to ${effectiveN}` : ""}.
+        </p>
+      ) : null}
       <dl className="grid grid-cols-2 gap-3 text-sm">
         <div>
-          <dt className="text-xs text-muted">Cost</dt>
+          <dt className="text-xs text-muted">Cost incl. fee</dt>
           <dd className="tabular-nums">${summary.cost.toFixed(2)}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted">Est. taker fee</dt>
+          <dd className="tabular-nums">${fee.toFixed(2)}</dd>
         </div>
         <div>
           <dt className="text-xs text-muted">Pays if right</dt>
           <dd className="tabular-nums">${summary.payout.toFixed(2)}</dd>
         </div>
         <div>
-          <dt className="text-xs text-muted">Model EV</dt>
-          <dd className={cn("tabular-nums", summary.ev >= 0 ? "text-yes" : "text-no")}>
-            {usd(summary.ev)}
+          <dt className="text-xs text-muted">Model EV after fee</dt>
+          <dd className={cn("tabular-nums", summary.netEv >= 0 ? "text-yes" : "text-no")}>
+            {usd(summary.netEv)}
           </dd>
         </div>
         <div>
-          <dt className="text-xs text-muted">Quarter-Kelly contracts</dt>
+          <dt className="text-xs text-muted">Kelly contracts (cap)</dt>
           <dd className="tabular-nums">{kellyN > 0 ? kellyN : "—"}</dd>
         </div>
       </dl>
@@ -147,9 +205,18 @@ export function PositionSizer({ market, fair }: { market: DeskMarket; fair: numb
           </button>
         ) : null}
       </div>
-      <Button type="button" onClick={logFill} disabled={price <= 0}>
+      <Button
+        type="button"
+        onClick={logFill}
+        disabled={price <= 0 || cost > cash}
+      >
         Log paper fill
       </Button>
+      {cost > cash ? (
+        <p className="text-xs text-no">
+          Costs ${cost.toFixed(2)} incl. fee but only ${cash.toFixed(2)} paper cash is available.
+        </p>
+      ) : null}
       {error ? <p className="text-xs text-no">{error}</p> : null}
       {note ? (
         <p className="text-xs text-muted">
@@ -160,9 +227,10 @@ export function PositionSizer({ market, fair }: { market: DeskMarket; fair: numb
         </p>
       ) : null}
       <p className="text-xs text-subtle">
-        Paper only. Fill at the touch ({side === "yes" ? "ask" : "bid"}). Marks follow the
-        live desk — market mid and Fairline fair. Kelly is capped at 25% of a $100 unit.
-        Model mark at entry is {pct(sideMark(side, fair))}.
+        Paper only. Fill at the touch ({side === "yes" ? "ask" : "bid"}). The Kalshi taker fee is
+        estimated per ticket ({FEE_POLICY_ID}) and deducted from cash and EV. Marks follow the
+        live desk — market mid and Fairline fair. Kelly is capped at 25% of a $100 unit and the
+        ticket is capped at 10% of paper cash.
       </p>
     </div>
   );

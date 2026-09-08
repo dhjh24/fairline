@@ -5,7 +5,15 @@ import { DeskView } from "@/components/desk-view";
 import { getDesk } from "@/lib/desk-fn";
 
 export const Route = createFileRoute("/")({
-  loader: () => getDesk(),
+  loader: async () => {
+    // A cold 429 from Kalshi must not crash the whole page: render the desk
+    // with no data and let the query layer retry.
+    try {
+      return await getDesk();
+    } catch {
+      return undefined;
+    }
+  },
   staleTime: 30_000,
   component: Home,
 });
@@ -17,6 +25,7 @@ function Home() {
     queryFn: () => getDesk(),
     initialData: initial,
     refetchInterval: 60_000,
+    retry: 3,
   });
 
   return (

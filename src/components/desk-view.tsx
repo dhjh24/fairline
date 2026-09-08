@@ -1,5 +1,5 @@
 import { Search } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { BotBar } from "@/components/bot-bar";
 import { Crypto15Card } from "@/components/crypto-15";
 import { CryptoTapeCard } from "@/components/crypto-tape";
@@ -9,32 +9,34 @@ import { StatStrip } from "@/components/stat-strip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { isBitcoinSeries, isEthereumSeries, isFifteenCrypto, isHourlyCrypto } from "@/lib/crypto";
+import { isBitcoinSeries, isEthereumSeries, isGoldSeries, isHourlyLadder } from "@/lib/crypto";
 import { useBlotter } from "@/lib/blotter";
-import { botIdleReason, proposeBotFills, useBot } from "@/lib/bot";
-import { useCalibration, type QuoteSnap } from "@/lib/calibration";
+import { useBot } from "@/lib/bot";
+import { evaluateBotRound } from "@/lib/decisions";
+import { collectDeskSnaps, useCalibration } from "@/lib/calibration";
 import { useForecasts } from "@/lib/forecasts";
-import type { CryptoFifteen, DeskMarket, DeskResponse } from "@/lib/types";
+import type { DeskMarket, DeskResponse } from "@/lib/types";
 import { useWatchlist } from "@/lib/watchlist";
 import { cn } from "@/lib/utils";
 
-type View = "opportunities" | "all" | "watch" | "btc" | "eth";
-type SortKey = "score" | "edge" | "volume" | "close" | "confidence";
+type View = "opportunities" | "all" | "watch" | "btc" | "eth" | "gold";
+type SortKey = "score" | "edge" | "volume" | "close" | "quality";
 
 const VIEWS: { id: View; label: string }[] = [
   { id: "opportunities", label: "Opportunities" },
   { id: "btc", label: "Bitcoin" },
   { id: "eth", label: "Ethereum" },
+  { id: "gold", label: "Gold" },
   { id: "all", label: "All books" },
   { id: "watch", label: "Watchlist" },
 ];
 
 const SORTS: { id: SortKey; label: string }[] = [
   { id: "score", label: "Score" },
-  { id: "edge", label: "Edge" },
+  { id: "edge", label: "Net edge" },
   { id: "volume", label: "Volume" },
   { id: "close", label: "Close" },
-  { id: "confidence", label: "Confidence" },
+  { id: "quality", label: "Quote" },
 ];
 
 export function DeskView({
@@ -59,68 +61,175 @@ export function DeskView({
   const botOn = useBot((s) => s.on);
   const botUniverse = useBot((s) => s.universe);
   const botHydrated = useBot((s) => s.hydrated);
-  const botWatching = useBot((s) => s.watching);
+  const recordEval = useBot((s) => s.recordEval);
   const botFilled = useBot((s) => s.filled);
+  const botError = useBot((s) => s.error);
+  const clearBotError = useBot((s) => s.clearError);
   const capture = useCalibration((s) => s.capture);
   const grokByTicker = useForecasts((s) => s.byTicker);
+  const [showLadders, setShowLadders] = useState(false);
+  const lastEvalQuoteRef = useRef<string>("");
+  const errorNotifiedRef = useRef(false);
 
   useEffect(() => {
     if (!data) return;
-    applyMarks(data.markets.map((m) => ({ ticker: m.ticker, mid: m.mid, fair: m.fair })));
+    applyMarks(
+      data.markets.map((m) => ({
+        ticker: m.ticker,
+        mid: m.mid,
+        fair: m.fair,
+        bid: m.bid,
+        ask: m.ask,
+        last: m.last,
+        asOf: m.quoteAt ?? data.asOf,
+      })),
+    );
   }, [data, applyMarks]);
 
   useEffect(() => {
     if (!data) return;
-    const want = new Set<string>([
-      ...watch,
-      ...lots.filter((l) => l.status === "open").map((l) => l.ticker),
-      ...(data.btc?.rungs.map((r) => r.ticker) ?? []),
-      ...(data.eth?.rungs.map((r) => r.ticker) ?? []),
-    ]);
-    const rows: QuoteSnap[] = [];
-    const seen = new Set<string>();
-    const push = (row: QuoteSnap) => {
-      if (seen.has(row.ticker)) return;
-      seen.add(row.ticker);
-      rows.push(row);
-    };
-    if (data.btc15) push(snapFifteen(data.btc15, grokByTicker[data.btc15.ticker]?.probability));
-    if (data.eth15) push(snapFifteen(data.eth15, grokByTicker[data.eth15.ticker]?.probability));
-    for (const m of data.markets) {
-      if (
-        m.signal === "hold" &&
-        !want.has(m.ticker) &&
-        !isFifteenCrypto(m.seriesTicker)
-      ) {
-        continue;
-      }
-      push(snapMarket(m, grokByTicker[m.ticker]?.probability));
-    }
-    capture(rows);
+    capture(
+      collectDeskSnaps(
+        data,
+        watch,
+        lots.filter((l) => l.status === "open").map((l) => l.ticker),
+        grokByTicker,
+      ),
+    );
   }, [data, watch, lots, capture, grokByTicker]);
 
+  // Bot engine: evaluate once per fresh desk quote (not on every lots churn),
+  // then execute the eligible decisions. Execution is idempotent because the
+  // blotter updates synchronously and gates re-check already-open tickers.
   useEffect(() => {
     if (!data || !botOn || !botHydrated) return;
-    const intents = proposeBotFills(data.markets, lots, botUniverse);
-    if (intents.length === 0) {
-      botWatching(botIdleReason(data.markets, lots, botUniverse));
+    const quoteAt = data.asOf;
+    const isNewQuote = quoteAt !== lastEvalQuoteRef.current;
+    if (!isNewQuote) return;
+
+    const round = evaluateBotRound({
+      markets: data.markets,
+      lots,
+      universe: botUniverse,
+      quoteAt,
+    });
+
+    lastEvalQuoteRef.current = quoteAt;
+    if (round.pausedReason) {
+      recordEval({
+        phase: "PAUSED",
+        note: round.note,
+        reason: round.pausedReason,
+        decisions: [],
+        eligibleCount: 0,
+      });
       return;
     }
-    const filled = [];
-    for (const intent of intents) {
-      const res = openLot(intent);
-      if (!res.ok) break;
-      filled.push({
-        ticker: intent.ticker,
-        title: intent.title,
-        side: intent.side,
-        contracts: intent.contracts,
-        fillPrice: intent.fillPrice,
-        at: new Date().toISOString(),
+
+    const fills: { ticker: string; title: string; side: "yes" | "no"; contracts: number; fillPrice: number; at: string }[] = [];
+    const failures: string[] = [];
+    for (const d of round.eligible) {
+      const res = openLot({
+        ticker: d.ticker,
+        eventTicker: d.eventTicker,
+        seriesTicker: d.seriesTicker,
+        title: d.title,
+        eventTitle: d.eventTitle,
+        category: d.category,
+        closeTime: d.closeTime,
+        side: d.side ?? "yes",
+        contracts: d.contracts ?? 1,
+        fillPrice: d.execPrice ?? 0.5,
+        fairAtEntry: d.fair,
+        midAtEntry: d.mid,
+        source: "bot",
+      });
+      if (res.ok) {
+        fills.push({
+          ticker: d.ticker,
+          title: d.title,
+          side: d.side ?? "yes",
+          contracts: d.contracts ?? 1,
+          fillPrice: d.execPrice ?? 0.5,
+          at: new Date().toISOString(),
+        });
+      } else {
+        failures.push(res.error);
+      }
+    }
+
+    if (fills.length > 0) {
+      botFilled(fills);
+      recordEval({
+        phase: fills.length > 0 && round.eligible.length === fills.length ? "PAPER FILLED" : round.phase,
+        note: `PAPER FILLED · ${fills.length} ticket${fills.length === 1 ? "" : "s"}`,
+        decisions: fills.map((f) => ({
+          id: `fill-${f.ticker}-${f.at}`,
+          at: f.at,
+          ticker: f.ticker,
+          title: f.title,
+          phase: "PAPER FILLED" as const,
+          side: f.side,
+          contracts: f.contracts,
+          reason: `Bought ${f.side.toUpperCase()} · ${f.contracts} contracts`,
+        })),
+        eligibleCount: fills.length,
+      });
+    } else if (failures.length > 0) {
+      recordEval({
+        phase: "PAUSED",
+        note: `HOLD · ${failures[0]}`,
+        reason: failures[0],
+        decisions: round.decisions.map((d) => ({
+          id: d.id,
+          at: d.decidedAt,
+          ticker: d.ticker,
+          title: d.title,
+          phase: "HOLD",
+          side: d.side,
+          contracts: d.contracts,
+          edgeAfterCost: d.edgeAfterCost,
+          reason: d.reason,
+        })),
+        eligibleCount: 0,
+        error: failures[0],
+      });
+    } else {
+      // Log a compact representative slice — routine HOLD ticks should not
+      // crowd the log with every candidate.
+      const kept = round.decisions.slice(0, 3);
+      recordEval({
+        phase: round.phase,
+        note: round.note,
+        reason: round.decisions[0]?.reason,
+        decisions: kept.map((d) => ({
+          id: d.id,
+          at: d.decidedAt,
+          ticker: d.ticker,
+          title: d.title,
+          phase: d.phase,
+          side: d.side,
+          contracts: d.contracts,
+          edgeAfterCost: d.edgeAfterCost,
+          reason: d.reason,
+        })),
+        eligibleCount: round.eligible.length,
       });
     }
-    if (filled.length > 0) botFilled(filled);
-  }, [data, botOn, botHydrated, botUniverse, lots, openLot, botWatching, botFilled]);
+  }, [data, botOn, botHydrated, botUniverse, lots, openLot, botFilled, recordEval]);
+
+  useEffect(() => {
+    if (!botOn || !error || errorNotifiedRef.current) return;
+    errorNotifiedRef.current = true;
+    recordEval({
+      phase: "ERROR",
+      note: "ERROR: desk books unavailable — the paper bot will not trade on stale or missing quotes.",
+      reason: error,
+      decisions: [],
+      eligibleCount: 0,
+      error,
+    });
+  }, [botOn, error, recordEval]);
 
   const markets = useMemo(() => {
     if (!data) return [];
@@ -130,12 +239,14 @@ export function DeskView({
       const rungs = new Set([
         ...(data.btc?.rungs.map((r) => r.ticker) ?? []),
         ...(data.eth?.rungs.map((r) => r.ticker) ?? []),
+        ...(data.gold?.rungs.map((r) => r.ticker) ?? []),
       ]);
-      rows = rows.filter((m) => !isHourlyCrypto(m.seriesTicker) || rungs.has(m.ticker));
+      rows = rows.filter((m) => !isHourlyLadder(m.seriesTicker) || rungs.has(m.ticker));
     }
     if (view === "watch") rows = rows.filter((m) => watch.includes(m.ticker));
     if (view === "btc") rows = rows.filter((m) => isBitcoinSeries(m.seriesTicker));
     if (view === "eth") rows = rows.filter((m) => isEthereumSeries(m.seriesTicker));
+    if (view === "gold") rows = rows.filter((m) => isGoldSeries(m.seriesTicker));
     if (cat !== "All") rows = rows.filter((m) => m.category === cat);
     const query = q.trim().toLowerCase();
     if (query) {
@@ -148,14 +259,21 @@ export function DeskView({
     }
     const copy = [...rows];
     copy.sort((a, b) => {
-      if (sort === "edge") return Math.abs(b.fair - b.mid) - Math.abs(a.fair - a.mid);
+      if (sort === "edge") return b.execEdge - a.execEdge;
       if (sort === "volume") return b.volume24h - a.volume24h;
       if (sort === "close") return Date.parse(a.closeTime) - Date.parse(b.closeTime);
-      if (sort === "confidence") return b.confidence - a.confidence;
+      if (sort === "quality") return b.quoteQuality - a.quoteQuality;
       return b.score - a.score;
     });
     return copy;
   }, [data, view, cat, q, sort, watch]);
+
+  const feedAge = useMemo(() => {
+    if (!data) return null;
+    const t = Date.parse(data.asOf);
+    if (!Number.isFinite(t)) return null;
+    return Math.max(0, Math.round((Date.now() - t) / 1000));
+  }, [data]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -164,7 +282,7 @@ export function DeskView({
           <h1 className="text-3xl font-medium tracking-tight md:text-4xl">The desk</h1>
           <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted">
             Independent fair values for live Kalshi contracts. Buy YES when the model is
-            above the ask, buy NO when it is below the bid.
+            above the ask, buy NO when it is below the bid — after the Kalshi taker fee.
           </p>
         </div>
       </div>
@@ -182,18 +300,55 @@ export function DeskView({
       {data ? (
         <>
           <StatStrip stats={data.stats} asOf={data.asOf} />
-          <BotBar />
-          {data.btc || data.eth ? (
-            <div className={cn("grid gap-4", data.btc && data.eth ? "lg:grid-cols-2" : "")}>
-              {data.btc ? <CryptoTapeCard tape={data.btc} /> : null}
-              {data.eth ? <CryptoTapeCard tape={data.eth} /> : null}
-            </div>
+          <FeedStatus data={data} feedAge={feedAge} />
+          <BotBar error={botError} onDismissError={clearBotError} />
+
+          {data.btc15 || data.eth15 || data.gold15 ? (
+            <section aria-labelledby="fifteen-heading">
+              <h2 id="fifteen-heading" className="mb-2 text-xs font-medium tracking-wide text-subtle uppercase">
+                Next 15-minute prints
+              </h2>
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {data.btc15 ? <Crypto15Card print={data.btc15} /> : null}
+                {data.eth15 ? <Crypto15Card print={data.eth15} /> : null}
+                {data.gold15 ? <Crypto15Card print={data.gold15} /> : null}
+              </div>
+            </section>
           ) : null}
-          {data.btc15 || data.eth15 ? (
-            <div className={cn("grid gap-4", data.btc15 && data.eth15 ? "lg:grid-cols-2" : "")}>
-              {data.btc15 ? <Crypto15Card print={data.btc15} /> : null}
-              {data.eth15 ? <Crypto15Card print={data.eth15} /> : null}
-            </div>
+
+          {data.btc || data.eth || data.gold ? (
+            <section aria-labelledby="ladder-heading" className="rounded-xl bg-surface shadow-[var(--shadow-border)]">
+              <button
+                type="button"
+                aria-expanded={showLadders}
+                onClick={() => setShowLadders((v) => !v)}
+                className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-elevated md:px-5"
+              >
+                <span>
+                  <span id="ladder-heading" className="block text-xs font-medium tracking-wide text-subtle uppercase">
+                    Hourly above/below ladders
+                  </span>
+                  <span className="mt-0.5 block text-sm text-muted">
+                    {[data.btc, data.eth, data.gold].filter(Boolean).map((t, i) => (
+                      <span key={t!.seriesTicker}>
+                        {i > 0 ? " · " : ""}
+                        {t!.name} implied {t!.implied.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })}
+                      </span>
+                    ))}
+                  </span>
+                </span>
+                <span className="shrink-0 rounded-md bg-elevated px-2 py-1 text-xs text-muted">
+                  {showLadders ? "Collapse" : "Expand"}
+                </span>
+              </button>
+              {showLadders ? (
+                <div className={cn("grid gap-4 border-t border-border p-4 md:grid-cols-2 md:p-5", data.btc && data.eth && data.gold ? "xl:grid-cols-3" : "")}>
+                  {data.btc ? <CryptoTapeCard tape={data.btc} /> : null}
+                  {data.eth ? <CryptoTapeCard tape={data.eth} /> : null}
+                  {data.gold ? <CryptoTapeCard tape={data.gold} /> : null}
+                </div>
+              ) : null}
+            </section>
           ) : null}
 
           <div className="flex flex-col gap-3">
@@ -264,44 +419,24 @@ export function DeskView({
   );
 }
 
-function snapMarket(m: DeskMarket, grok?: number): QuoteSnap {
-  return {
-    ticker: m.ticker,
-    eventTicker: m.eventTicker,
-    seriesTicker: m.seriesTicker,
-    title: m.yesSubTitle || m.title,
-    eventTitle: m.eventTitle,
-    category: m.category,
-    closeTime: m.closeTime,
-    target: m.strike,
-    mid: m.mid,
-    fair: m.fair,
-    bid: m.bid,
-    ask: m.ask,
-    signal: m.signal,
-    grok,
-    snappedAt: new Date().toISOString(),
-  };
-}
-
-function snapFifteen(p: CryptoFifteen, grok?: number): QuoteSnap {
-  return {
-    ticker: p.ticker,
-    eventTicker: p.ticker,
-    seriesTicker: p.asset === "eth" ? "KXETH15M" : "KXBTC15M",
-    title: p.title,
-    eventTitle: p.eventTitle,
-    category: "Crypto",
-    closeTime: p.closeTime,
-    target: p.target,
-    mid: p.mid,
-    fair: p.fair,
-    bid: p.bid,
-    ask: p.ask,
-    signal: p.signal,
-    grok,
-    snappedAt: new Date().toISOString(),
-  };
+function FeedStatus({ data, feedAge }: { data: DeskResponse; feedAge: number | null }) {
+  // Hydration-safe: first paint (server and client) shows the snapshot clock;
+  // the live seconds counter appears only after mount.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const stale = mounted && feedAge != null && feedAge > 180;
+  return (
+    <p className="-mt-2 text-xs text-subtle">
+      Books snapshot{" "}
+      {mounted && feedAge != null ? (
+        <span className={cn(stale ? "text-no" : "text-fg")}>{feedAge}s ago</span>
+      ) : (
+        <span className="text-fg">{new Date(data.asOf).toLocaleTimeString()}</span>
+      )}
+      {" · "}
+      refreshed about every 45s · quote ages show on each row
+    </p>
+  );
 }
 
 function Chip({

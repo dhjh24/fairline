@@ -7,6 +7,7 @@ import { STARTING_CASH, blotterTotals, useBlotter } from "@/lib/blotter";
 import { scoredRows, summarize, useCalibration } from "@/lib/calibration";
 import { useBot } from "@/lib/bot";
 import { useForecasts } from "@/lib/forecasts";
+import { useRisk } from "@/lib/risk";
 import { useWatchlist } from "@/lib/watchlist";
 import { SettlementLoop } from "@/components/settlement-loop";
 import { usd } from "@/lib/format";
@@ -24,6 +25,7 @@ export function AppShell({
   const hydrateForecasts = useForecasts((s) => s.hydrate);
   const hydrateCal = useCalibration((s) => s.hydrate);
   const hydrateBot = useBot((s) => s.hydrate);
+  const hydrateRisk = useRisk((s) => s.hydrate);
   const botOn = useBot((s) => s.on);
   const botNote = useBot((s) => s.lastNote);
   const lots = useBlotter((s) => s.lots);
@@ -37,7 +39,7 @@ export function AppShell({
     const rows = scoredRows(snaps, verdicts);
     if (!rows.length) return null;
     const s = summarize(rows);
-    return s.honestN ? s.honestBrier : s.brier;
+    return s.honestN ? s.honestBrier : null;
   }, [snaps, verdicts]);
 
   useEffect(() => {
@@ -46,7 +48,8 @@ export function AppShell({
     hydrateForecasts();
     hydrateCal();
     hydrateBot();
-  }, [hydrateWatch, hydrateBook, hydrateForecasts, hydrateCal, hydrateBot]);
+    hydrateRisk();
+  }, [hydrateWatch, hydrateBook, hydrateForecasts, hydrateCal, hydrateBot, hydrateRisk]);
 
   return (
     <div className="min-h-dvh bg-bg text-fg">
@@ -99,8 +102,9 @@ export function AppShell({
             <Link
               to="/calibration"
               className="inline-flex h-8 items-center gap-2 rounded-sm px-2.5 text-xs text-muted transition-colors duration-150 hover:bg-elevated hover:text-fg"
+              title="Model performance — calibration"
             >
-              <span>Score</span>
+              <span>Model</span>
               {calBrier != null ? (
                 <span className="tabular-nums">{calBrier.toFixed(2)}</span>
               ) : (
@@ -110,8 +114,9 @@ export function AppShell({
             <Link
               to="/blotter"
               className="inline-flex h-8 items-center gap-2 rounded-sm px-2.5 text-xs text-muted transition-colors duration-150 hover:bg-elevated hover:text-fg"
+              title="Paper positions"
             >
-              <span>Blotter</span>
+              <span>Positions</span>
               {hasBook ? (
                 <span
                   className={cn(
@@ -149,8 +154,8 @@ export function AppShell({
                     <li>
                       <span className="text-fg">Longshot calibration.</span> A power map
                       (γ 1.14) trims overbet longshots and lifts underbet favorites.
-                      It is skipped on 15-minute Bitcoin and Ethereum — those prints
-                      should not be faded toward 0/1.
+                      It is skipped on 15-minute and hourly Bitcoin and Ethereum —
+                      those books should not be treated as sportsbook longshots.
                     </li>
                     <li>
                       <span className="text-fg">Liquidity gate.</span> Thin books
@@ -165,7 +170,8 @@ export function AppShell({
                     </li>
                     <li>
                       <span className="text-fg">Tape and book.</span> Last-versus-mid and
-                      order-book imbalance, scaled by liquidity.
+                      order-book imbalance, scaled by liquidity. Fifteen-minute crypto
+                      ignores the prior window’s last print.
                     </li>
                     <li>
                       <span className="text-fg">Crypto tape.</span> Hourly Bitcoin and

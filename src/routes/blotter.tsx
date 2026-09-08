@@ -24,7 +24,15 @@ function BlotterPage() {
   useEffect(() => {
     if (!desk.data) return;
     applyMarks(
-      desk.data.markets.map((m) => ({ ticker: m.ticker, mid: m.mid, fair: m.fair })),
+      desk.data.markets.map((m) => ({
+        ticker: m.ticker,
+        mid: m.mid,
+        fair: m.fair,
+        bid: m.bid,
+        ask: m.ask,
+        last: m.last,
+        asOf: m.quoteAt ?? desk.data?.asOf,
+      })),
     );
   }, [desk.data, applyMarks]);
 
@@ -48,7 +56,16 @@ function BlotterPage() {
 
   useEffect(() => {
     if (!extra.data?.length) return;
-    applyMarks(extra.data.map((m) => ({ ticker: m.ticker, mid: m.mid, fair: m.fair })));
+    applyMarks(
+      extra.data.map((m) => ({
+        ticker: m.ticker,
+        mid: m.mid,
+        fair: m.fair,
+        bid: m.bid,
+        ask: m.ask,
+        last: m.last,
+      })),
+    );
   }, [extra.data, applyMarks]);
 
   return (

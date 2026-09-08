@@ -2,11 +2,14 @@ import { createServerFn } from "@tanstack/react-start";
 import {
   CRYPTO_FIRST,
   CRYPTO_SERIES,
+  GOLD_FIRST,
+  GOLD_SERIES,
   impliedSpot,
   isBitcoinSeries,
   isEthereumSeries,
-  isFifteenCrypto,
-  isHourlyCrypto,
+  isGoldSeries,
+  isHourlyLadder,
+  isPrintMarket,
   pickAtmWindow,
   strikeThreshold,
 } from "@/lib/crypto";
@@ -47,12 +50,17 @@ async function kalshiGet<T>(path: string, timeoutMs = 12_000): Promise<T> {
       headers: { Accept: "application/json" },
     });
     if (res.status === 429) {
-      await new Promise((r) => setTimeout(r, 800));
-      const retry = await fetch(`${KALSHI_API}${path}`, {
-        headers: { Accept: "application/json" },
-      });
-      if (!retry.ok) throw new Error(`Kalshi ${retry.status} on ${path.split("?")[0]}`);
-      return (await retry.json()) as T;
+      // Kalshi rate limit: back off before retrying. Never throw on the first
+      // 429 — the desk fetch fans out and will otherwise blank a cold load.
+      for (const delay of [800, 1600, 3200]) {
+        await new Promise((r) => setTimeout(r, delay));
+        const retry = await fetch(`${KALSHI_API}${path}`, {
+          headers: { Accept: "application/json" },
+        });
+        if (retry.ok) return (await retry.json()) as T;
+        if (retry.status !== 429) throw new Error(`Kalshi ${retry.status} on ${path.split("?")[0]}`);
+      }
+      throw new Error(`Kalshi 429 on ${path.split("?")[0]}`);
     }
     if (!res.ok) {
       throw new Error(`Kalshi ${res.status} on ${path.split("?")[0]}`);
@@ -135,17 +143,27 @@ async function loadSeriesEvents(series: string): Promise<RawEvent[]> {
 }
 
 async function loadCryptoEvents(): Promise<RawEvent[]> {
-  const rest = CRYPTO_SERIES.filter(
-    (series) => !CRYPTO_FIRST.includes(series as (typeof CRYPTO_FIRST)[number]),
-  );
-  const first = await mapPool([...CRYPTO_FIRST], 2, (series) =>
+  // BTC/ETH 15m first (highest traffic), then gold 15m, then hourly/longer
+  // series — all at low concurrency so Kalshi 429s cannot starve the prints.
+  const btcEthFirst = await mapPool([...CRYPTO_FIRST], 2, (series) =>
     loadSeriesEvents(series).catch(() => [] as RawEvent[]),
   );
+  const goldFirst = await mapPool([...GOLD_FIRST], 2, (series) =>
+    loadSeriesEvents(series).catch(() => [] as RawEvent[]),
+  );
+  const rest = [
+    ...CRYPTO_SERIES.filter(
+      (series) => !CRYPTO_FIRST.includes(series as (typeof CRYPTO_FIRST)[number]),
+    ),
+    ...GOLD_SERIES.filter(
+      (series) => !GOLD_FIRST.includes(series as (typeof GOLD_FIRST)[number]),
+    ),
+  ];
   const later = await mapPool(rest, 2, (series) =>
     loadSeriesEvents(series).catch(() => [] as RawEvent[]),
   );
   const map = new Map<string, RawEvent>();
-  for (const e of [...first.flat(), ...later.flat()]) {
+  for (const e of [...btcEthFirst.flat(), ...goldFirst.flat(), ...later.flat()]) {
     const t = e.event_ticker;
     if (t) map.set(t, e);
   }
@@ -235,7 +253,7 @@ function keepCrypto(
     seen.add(row.ticker);
   };
   for (const m of all) {
-    if (isFifteenCrypto(m.seriesTicker)) push(m);
+    if (isPrintMarket(m.seriesTicker)) push(m);
   }
   if (tape) {
     for (const rung of tape.rungs) {
@@ -245,7 +263,7 @@ function keepCrypto(
   const more = all
     .filter((m) => {
       if (seen.has(m.ticker)) return false;
-      if (isHourlyCrypto(m.seriesTicker)) {
+      if (isHourlyLadder(m.seriesTicker)) {
         return m.mid >= 0.08 && m.mid <= 0.92 && m.volume24h >= 80;
       }
       return true;
@@ -329,7 +347,16 @@ function buildDesk(events: RawEvent[]): DeskResponse {
     for (const input of inputs) {
       input.fieldSize = fieldSize;
       input.fieldSum = fieldSum;
-      const volOk = input.volume24h >= 8 || input.volume >= 150 || input.openInterest >= 80;
+      const isShort = isPrintMarket(input.seriesTicker) || isHourlyLadder(input.seriesTicker);
+      // Print/ladder series (BTC/ETH/gold 15m + hourly) may be genuinely thin:
+      // any live executable two-sided quote earns a place on the tape so the
+      // gold/XAUUSD book is visible even before volume builds. The general
+      // event pool keeps the strict volume gate.
+      const quoted =
+        input.bid > 0 && input.ask > 0 && input.ask >= input.bid && input.ask < 1;
+      const volOk = isShort
+        ? quoted || input.volume24h >= 8 || input.volume >= 150 || input.openInterest >= 80
+        : input.volume24h >= 8 || input.volume >= 150 || input.openInterest >= 80;
       if (!volOk) continue;
       priced.push(priceMarket(input));
     }
@@ -339,15 +366,21 @@ function buildDesk(events: RawEvent[]): DeskResponse {
 
   const btcAll = priced.filter((m) => isBitcoinSeries(m.seriesTicker));
   const ethAll = priced.filter((m) => isEthereumSeries(m.seriesTicker));
+  const goldAll = priced.filter((m) => isGoldSeries(m.seriesTicker));
   const rest = priced.filter(
-    (m) => !isBitcoinSeries(m.seriesTicker) && !isEthereumSeries(m.seriesTicker),
+    (m) =>
+      !isBitcoinSeries(m.seriesTicker) &&
+      !isEthereumSeries(m.seriesTicker) &&
+      !isGoldSeries(m.seriesTicker),
   );
   const btcTape = buildCryptoTape(btcAll, "KXBTCD", "btc", "Bitcoin");
   const ethTape = buildCryptoTape(ethAll, "KXETHD", "eth", "Ethereum");
+  const goldTape = buildCryptoTape(goldAll, "KXGOLDH", "gold", "Gold");
   const btc15 = buildFifteen(btcAll, "KXBTC15M", "btc", "Bitcoin 15m");
   const eth15 = buildFifteen(ethAll, "KXETH15M", "eth", "Ethereum 15m");
+  const gold15 = buildFifteen(goldAll, "KXGOLD15M", "gold", "Gold 15m");
 
-  const CRYPTO_SLOTS = 56;
+  const CRYPTO_SLOTS = 60; // 24 BTC + 24 ETH + 12 gold keeps
   const byVol = rest.slice(0, 200);
   const seen = new Set(byVol.map((m) => m.ticker));
   const extra = rest
@@ -355,9 +388,12 @@ function buildDesk(events: RawEvent[]): DeskResponse {
     .sort((a, b) => b.score - a.score)
     .slice(0, 40);
   const restMarkets = [...byVol, ...extra].slice(0, DESK_SIZE - CRYPTO_SLOTS);
-  const btcKeep = keepCrypto(btcAll, btcTape, 28);
-  const ethKeep = keepCrypto(ethAll, ethTape, 28);
-  const markets = [...restMarkets, ...btcKeep, ...ethKeep].slice(0, DESK_SIZE);
+  const btcKeep = keepCrypto(btcAll, btcTape, 24);
+  const ethKeep = keepCrypto(ethAll, ethTape, 24);
+  const goldKeep = keepCrypto(goldAll, goldTape, 12);
+  const markets = [...restMarkets, ...btcKeep, ...ethKeep, ...goldKeep].slice(0, DESK_SIZE);
+  const asOf = new Date().toISOString();
+  for (const m of markets) m.quoteAt = asOf;
 
   const catMap = new Map<string, number>();
   for (const m of markets) {
@@ -388,6 +424,8 @@ function buildDesk(events: RawEvent[]): DeskResponse {
     eth: ethTape,
     btc15,
     eth15,
+    gold: goldTape,
+    gold15,
   };
 }
 
@@ -464,7 +502,7 @@ async function loadCandles(series: string, ticker: string, tauDays: number): Pro
   const now = Math.floor(Date.now() / 1000);
   let interval = 1440;
   let lookback = 180 * 86400;
-  if (isFifteenCrypto(series) || tauDays < 2) {
+  if (isPrintMarket(series) || tauDays < 2) {
     interval = 1;
     lookback = 8 * 3600;
   } else if (tauDays < 21) {
@@ -579,13 +617,14 @@ async function loadMarketDetail(rawTicker: string): Promise<MarketDetail> {
     .slice(0, 8);
 
   const candles = await loadCandles(market.seriesTicker, ticker, market.tauDays);
-  const printHistory = isFifteenCrypto(market.seriesTicker)
+  const printHistory = isPrintMarket(market.seriesTicker)
     ? (await loadSettledFifteen().catch(() => [])).filter(
         (h) => h.seriesTicker === market.seriesTicker,
       )
     : [];
 
   const rules = [raw.rules_primary, raw.rules_secondary].filter(Boolean).join("\n\n");
+  market.quoteAt = new Date().toISOString();
 
   return {
     market,
@@ -741,7 +780,7 @@ function parseResult(raw: string | undefined): "yes" | "no" | null {
 }
 
 async function loadSettledFifteen(): Promise<SettlementHit[]> {
-  const series = ["KXBTC15M", "KXETH15M"] as const;
+  const series = ["KXBTC15M", "KXETH15M", "KXGOLD15M"] as const;
   const pages = await mapPool([...series], 2, async (s) => {
     const q = new URLSearchParams({
       limit: "12",

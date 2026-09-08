@@ -16,7 +16,7 @@ Read this file before changing the model, Kalshi fetch, blotter, bot, or calibra
 - **No Kalshi orders.** Paper fills only. Never send live orders.
 - **No auth. No database.** Book, bot, watchlist, snapshots, forecasts live in `localStorage`.
 - **Do not copy last trade as fair.** Fair is the statistical model in `src/lib/model.ts`.
-- **Do not fade 15-minute BTC/ETH toward 0/1.** Skip longshot γ and near-expiry convexity on `KXBTC15M` / `KXETH15M`.
+- **Do not fade 15-minute BTC/ETH toward 0/1.** Skip longshot γ and near-expiry convexity on `KXBTC15M` / `KXETH15M`. Skip γ on hourly BTC/ETH ladders too.
 - **Do not score slam-dunks as skill.** Honest calibration = mid still 8¢–92¢ and snap ≥ 90s before close.
 - **Do not block the blotter on a Kalshi desk fetch.** Lots are local; marks refresh in the background.
 - **Do not parallel-fetch huge hourly series before 15m.** Fetch `KXBTC15M` and `KXETH15M` first, then the rest at concurrency 2. Kalshi 429s otherwise, and the 15m cards go missing.
@@ -49,7 +49,7 @@ Self-host: `.env.example` → `.env`, optional `XAI_API_KEY`. Paper state still 
 | `/` | `src/routes/index.tsx` + `desk-view.tsx` | Desk, tapes, 15m, bot, batch Grok |
 | `/market/$ticker` | `src/routes/market.$ticker.tsx` | Detail, 1-minute YES tape, sizer |
 | `/blotter` | `src/routes/blotter.tsx` | Local lots. **No loader that awaits getDesk.** |
-| `/calibration` | `src/routes/calibration.tsx` | Honest Brier vs market |
+| `/calibration` | `src/routes/calibration.tsx` | Honest Brier vs market. Background desk fetch, **no loader**. |
 
 ---
 
@@ -57,7 +57,11 @@ Self-host: `.env.example` → `.env`, optional `XAI_API_KEY`. Paper state still 
 
 | Path | Owns |
 |---|---|
-| `src/lib/model.ts` | Fair, signals, Kelly, **15m skip of γ/time** |
+| `src/lib/model.ts` | Fair, signals, Kelly, **skip γ/time on 15m and hourly crypto**, `MODEL_VERSION` |
+| `src/lib/fees.ts` | Kalshi taker-fee estimate (verified formula) used for net edges and fills |
+| `src/lib/decisions.ts` | Typed bot decisions: gates, phases, reasons, decision log |
+| `src/lib/risk.ts` | Deterministic paper limits + vetoes (`fairline-risk-v1`) |
+| `src/lib/bot-config.ts` | Bot universe, sizing and gate constants (import-cycle-free) |
 | `src/lib/kalshi.ts` | Public API helpers, mids, clamp |
 | `src/lib/crypto.ts` | Series lists, implied spot, 15m vs hourly |
 | `src/lib/desk-fn.ts` | Server fns: desk, market, settlements, candles, batch forecast |
@@ -116,7 +120,7 @@ Priority series in `src/lib/crypto.ts`: `KXBTC15M`, `KXETH15M` first, then `KXBT
 
 1. Mid from bid/ask/last
 2. Event vig on mutually exclusive fields
-3. Longshot power map γ **1.14** — **skipped on 15m crypto**
+3. Longshot power map γ **1.14** — **skipped on 15m and hourly crypto**
 4. Near-expiry convexity — **skipped on 15m and hourly crypto**
 5. Tape momentum + book imbalance, scaled by liquidity
 6. Signal YES/NO only if EV after touch ≥ ~2¢ and liquidity ≥ 0.28
@@ -188,7 +192,6 @@ Git identity used for this repo: `Dirk Hillard` / `174537868+dhjh24@users.norepl
 ## Likely next work (only if asked)
 
 - SOL / other crypto tapes (copy ETH pattern in `crypto.ts`)
-- Persist first-snap as well as last-snap for honest 15m Brier
 - Reliability by series, not pooled rungs
 - Import JSON book back into localStorage
 - Live Kalshi trading — **do not add unless the user explicitly asks**, and then keep paper mode default
